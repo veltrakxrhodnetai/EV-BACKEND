@@ -1,0 +1,71 @@
+server:
+  port: ${SERVER_PORT:8080}
+
+spring:
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/evcsms}
+    username: ${SPRING_DATASOURCE_USERNAME:evuser}
+    password: ${SPRING_DATASOURCE_PASSWORD:evpass}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    show-sql: ${SPRING_JPA_SHOW_SQL:true}
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        format_sql: true
+  sql:
+    init:
+      mode: never  # Flyway handles migrations
+  flyway:
+    enabled: true
+    baseline-on-migrate: true
+    locations: classpath:db/migration
+  web:
+    cors:
+      allowed-origins: ${CORS_ALLOWED_ORIGINS:http://localhost:5173,http://localhost:3000}
+      allowed-methods: GET,POST,PUT,DELETE,OPTIONS
+      allowed-headers: "*"
+      allow-credentials: false
+
+logging:
+  level:
+    com.evcsms: ${LOG_LEVEL:INFO}
+    org.hibernate.SQL: ${SQL_LOG_LEVEL:DEBUG}
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,info
+  endpoint:
+    health:
+      show-details: when-authorized
+
+# Payment gateway configuration
+app:
+  payment:
+    webhook:
+      mock-signature-validation: ${APP_PAYMENT_WEBHOOK_MOCK:true}
+  auth:
+    otp:
+      ttl-seconds: ${OTP_TTL_SECONDS:300}
+      allow-dev-test-otp: ${OTP_ALLOW_DEV_TEST:false}
+      sms-required: ${OTP_SMS_REQUIRED:true}
+      msg91:
+        enabled: ${MSG91_ENABLED:true}
+        auth-key: ${MSG91_AUTH_KEY:500086Axgw0hbj69e8a5a9P1}
+        template-id: ${MSG91_TEMPLATE_ID:69e8c993b6c8931b61090803}
+        country-code: ${MSG91_COUNTRY_CODE:91}
+        mode: ${MSG91_MODE:flow}
+        endpoint: ${MSG91_OTP_ENDPOINT:https://control.msg91.com/api/v5/otp}
+        flow-endpoint: ${MSG91_FLOW_ENDPOINT:https://control.msg91.com/api/v5/flow}
+        flow-otp-var-name: ${MSG91_FLOW_OTP_VAR_NAME:VAR1}
+        charge-complete-template-id: ${MSG91_CHARGE_COMPLETE_TEMPLATE_ID:69e8c91aec4ab5ed1b08dfe2}
+
+# Razorpay configuration
+razorpay:
+  key-id: ${RAZORPAY_KEY_ID:}
+  key-secret: ${RAZORPAY_KEY_SECRET:}
+  webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
