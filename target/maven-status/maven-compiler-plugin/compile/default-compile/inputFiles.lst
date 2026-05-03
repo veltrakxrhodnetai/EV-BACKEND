@@ -1,126 +1,126 @@
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\aspect\OwnerStationAccessAspect.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\audit\Audit.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\audit\AuditAspect.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\config\AdminUserBootstrap.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\config\CorrelationIdFilter.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\config\OcppServerConfig.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\config\SecurityConfig.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\config\WebSocketConfig.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\AdminAuthController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\AdminPortalController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\AuthController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\ChargerController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\CustomerAuthController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\MockPaymentGatewayController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\OwnerAuthController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\OwnerDashboardController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\PaymentController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\SessionController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\SettlementController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\controller\StationController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminChargerRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminConnectorRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminLoginRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminOcppConfigRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminOwnerRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminRfidRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminStationRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AdminTariffRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\AuthResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\CheckPhoneRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\CheckPhoneResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\LoginOtpRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\LoginPasscodeRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\MockCaptureRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\MockGatewayResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\MockPreAuthRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\MockReleaseRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\PaymentCaptureRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\PaymentPreAuthRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\PaymentRefundRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\PaymentWebhookRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\PaymentWebhookResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\RegisterRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\RequestOtpRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\RequestOtpResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\ResetPasswordRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\SendOtpRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\SendOtpResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\SessionResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\SetPasscodeRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\StartSessionRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\StartSessionResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\StopSessionResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\VerifyOtpCustomerRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\VerifyOtpRequest.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\dto\VerifyOtpResponse.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\EvCsmsApplication.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\AdminAuditLog.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\AdminUser.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\BillingResult.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Charger.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\ChargingSession.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\ChargingSessionStatus.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\CompletedChargingLog.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Connector.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Customer.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\MeterValue.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\OcppConfiguration.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\OcppMessageLog.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Owner.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\OwnerAccount.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\OwnerRole.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\OwnerStationAssignment.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\OwnerStationAssignmentId.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\PaymentRecord.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Rfid.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\RfidRegistry.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\RfidStatus.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\SessionStartedBy.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Settlement.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Station.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\StationSettlement.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\model\Tariff.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\ocpp\OcppServerCoreWrapper.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\ocpp\OcppWebSocketHandler.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\AdminAuditLogRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\AdminUserRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\ChargerRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\ChargingSessionRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\CompletedChargingLogRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\ConnectorRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\CustomerRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\MeterValueRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\OcppConfigurationRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\OcppMessageLogRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\OwnerAccountRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\OwnerRoleRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\OwnerStationAssignmentRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\PaymentRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\RfidRegistryRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\RfidRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\SettlementRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\StationRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\StationSettlementRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\repository\TariffRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\AdminAuthService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\ChargingSessionService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\CustomerAuthService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\MockPaymentGatewayService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\Msg91OtpService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\OcppService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\OtpAuthService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\OwnerAuthService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\PaymentService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\RfidService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\service\SettlementService.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\simulator\ChargerSimulator.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\util\IdUtils.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\websocket\OcppWebSocketHandler.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\backend\websocket\SessionWebSocketHandler.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\config\WebSocketConfig.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\controller\ChargerController.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\model\Charger.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\ocpp\OcppWebSocketHandler.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\repository\ChargerRepository.java
-C:\EV veltrak\ev-csms\backend\src\main\java\com\evcsms\service\ChargerService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\aspect\OwnerStationAccessAspect.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\audit\Audit.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\audit\AuditAspect.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\config\AdminUserBootstrap.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\config\CorrelationIdFilter.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\config\OcppServerConfig.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\config\SecurityConfig.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\config\WebSocketConfig.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\AdminAuthController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\AdminPortalController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\AuthController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\ChargerController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\CustomerAuthController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\MockPaymentGatewayController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\OwnerAuthController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\OwnerDashboardController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\PaymentController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\SessionController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\SettlementController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\controller\StationController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminChargerRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminConnectorRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminLoginRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminOcppConfigRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminOwnerRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminRfidRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminStationRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AdminTariffRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\AuthResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\CheckPhoneRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\CheckPhoneResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\LoginOtpRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\LoginPasscodeRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\MockCaptureRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\MockGatewayResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\MockPreAuthRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\MockReleaseRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\PaymentCaptureRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\PaymentPreAuthRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\PaymentRefundRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\PaymentWebhookRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\PaymentWebhookResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\RegisterRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\RequestOtpRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\RequestOtpResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\ResetPasswordRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\SendOtpRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\SendOtpResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\SessionResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\SetPasscodeRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\StartSessionRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\StartSessionResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\StopSessionResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\VerifyOtpCustomerRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\VerifyOtpRequest.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\dto\VerifyOtpResponse.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\EvCsmsApplication.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\AdminAuditLog.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\AdminUser.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\BillingResult.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Charger.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\ChargingSession.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\ChargingSessionStatus.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\CompletedChargingLog.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Connector.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Customer.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\MeterValue.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\OcppConfiguration.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\OcppMessageLog.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Owner.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\OwnerAccount.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\OwnerRole.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\OwnerStationAssignment.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\OwnerStationAssignmentId.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\PaymentRecord.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Rfid.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\RfidRegistry.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\RfidStatus.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\SessionStartedBy.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Settlement.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Station.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\StationSettlement.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\model\Tariff.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\ocpp\OcppServerCoreWrapper.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\ocpp\OcppWebSocketHandler.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\AdminAuditLogRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\AdminUserRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\ChargerRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\ChargingSessionRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\CompletedChargingLogRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\ConnectorRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\CustomerRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\MeterValueRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\OcppConfigurationRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\OcppMessageLogRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\OwnerAccountRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\OwnerRoleRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\OwnerStationAssignmentRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\PaymentRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\RfidRegistryRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\RfidRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\SettlementRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\StationRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\StationSettlementRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\repository\TariffRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\AdminAuthService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\ChargingSessionService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\CustomerAuthService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\MockPaymentGatewayService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\Msg91OtpService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\OcppService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\OtpAuthService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\OwnerAuthService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\PaymentService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\RfidService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\service\SettlementService.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\simulator\ChargerSimulator.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\util\IdUtils.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\websocket\OcppWebSocketHandler.java
+C:\EV-BACKEND\src\main\java\com\evcsms\backend\websocket\SessionWebSocketHandler.java
+C:\EV-BACKEND\src\main\java\com\evcsms\config\WebSocketConfig.java
+C:\EV-BACKEND\src\main\java\com\evcsms\controller\ChargerController.java
+C:\EV-BACKEND\src\main\java\com\evcsms\model\Charger.java
+C:\EV-BACKEND\src\main\java\com\evcsms\ocpp\OcppWebSocketHandler.java
+C:\EV-BACKEND\src\main\java\com\evcsms\repository\ChargerRepository.java
+C:\EV-BACKEND\src\main\java\com\evcsms\service\ChargerService.java
