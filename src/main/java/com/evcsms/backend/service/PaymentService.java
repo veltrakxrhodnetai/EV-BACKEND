@@ -24,13 +24,16 @@ public class PaymentService {
     private static final long TEMP_HOLD_EXPIRY_SECONDS = 900;
 
     private final PaymentRepository paymentRepository;
+    private final boolean skipWebhookSignatureValidation;
     private final boolean mockWebhookSignatureValidation;
     private final String razorpayWebhookSecret;
 
     public PaymentService(PaymentRepository paymentRepository,
+                          @Value("${app.payment.webhook.skip-signature-validation:false}") boolean skipWebhookSignatureValidation,
                           @Value("${app.payment.webhook.mock-signature-validation:true}") boolean mockWebhookSignatureValidation,
                           @Value("${razorpay.webhook-secret:}") String razorpayWebhookSecret) {
         this.paymentRepository = paymentRepository;
+        this.skipWebhookSignatureValidation = skipWebhookSignatureValidation;
         this.mockWebhookSignatureValidation = mockWebhookSignatureValidation;
         this.razorpayWebhookSecret = razorpayWebhookSecret;
     }
@@ -196,6 +199,11 @@ public class PaymentService {
      * Uses HMAC-SHA256 for validation.
      */
     public void validateWebhookSignature(String payload, String signature) {
+        if (skipWebhookSignatureValidation) {
+            logger.warn("[WEBHOOK] Skipping signature validation (test mode)");
+            return;
+        }
+
         if (signature == null || signature.isBlank()) {
             throw new SecurityException("Missing webhook signature");
         }

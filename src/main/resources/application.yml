@@ -45,8 +45,18 @@ management:
 
 # Payment gateway configuration
 app:
+  charging:
+    ac-no-energy-timeout-seconds: ${APP_CHARGING_AC_NO_ENERGY_TIMEOUT_SECONDS:60}
+    offline-session-timeout-seconds: ${APP_CHARGING_OFFLINE_SESSION_TIMEOUT_SECONDS:120}
+  ocpp:
+    presence:
+      minimum-offline-threshold-seconds: ${APP_OCPP_MINIMUM_OFFLINE_THRESHOLD_SECONDS:90}
+      heartbeat-miss-multiplier: ${APP_OCPP_HEARTBEAT_MISS_MULTIPLIER:3}
+      watchdog-interval-millis: ${APP_OCPP_WATCHDOG_INTERVAL_MILLIS:15000}
+      stale-charging-mitigation-cooldown-seconds: ${APP_OCPP_STALE_CHARGING_MITIGATION_COOLDOWN_SECONDS:15}
   payment:
     webhook:
+      skip-signature-validation: ${APP_PAYMENT_WEBHOOK_SKIP_SIGNATURE:false}
       mock-signature-validation: ${APP_PAYMENT_WEBHOOK_MOCK:true}
   auth:
     otp:

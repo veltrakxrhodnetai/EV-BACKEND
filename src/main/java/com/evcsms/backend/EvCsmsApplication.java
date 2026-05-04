@@ -8,12 +8,14 @@ import org.springframework.boot.SpringApplication;
 import org.springframework.boot.autoconfigure.SpringBootApplication;
 import org.springframework.data.jpa.repository.config.EnableJpaRepositories;
 import org.springframework.context.annotation.Bean;
+import org.springframework.scheduling.annotation.EnableScheduling;
 
 import java.util.TimeZone;
 
 @SpringBootApplication(scanBasePackages = {"com.evcsms"})
 @EntityScan(basePackages = {"com.evcsms.backend.model", "com.evcsms.model"})
 @EnableJpaRepositories(basePackages = {"com.evcsms.backend.repository", "com.evcsms.repository"})
+@EnableScheduling
 public class EvCsmsApplication {
 
     private static final Logger logger = LoggerFactory.getLogger(EvCsmsApplication.class);

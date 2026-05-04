@@ -57,6 +57,7 @@ com\evcsms\backend\controller\AdminPortalController$FinancialDashboardResponse.c
 com\evcsms\service\ChargerService.class
 com\evcsms\backend\controller\MockPaymentGatewayController.class
 com\evcsms\backend\model\Tariff.class
+com\evcsms\backend\service\OcppOfflineWatchdogService.class
 com\evcsms\backend\service\PaymentService.class
 com\evcsms\backend\repository\AdminUserRepository.class
 com\evcsms\backend\model\Charger.class

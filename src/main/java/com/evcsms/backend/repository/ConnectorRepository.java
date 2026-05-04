@@ -6,6 +6,7 @@ import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.jpa.repository.Query;
 import org.springframework.data.repository.query.Param;
 import org.springframework.stereotype.Repository;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.List;
 import java.util.Optional;
@@ -32,6 +33,7 @@ public interface ConnectorRepository extends JpaRepository<Connector, Long> {
         Optional<Connector> findByCharger_IdAndConnectorNo(@Param("chargerId") Long chargerId, @Param("connectorNo") Integer connectorNo);
 
     @Modifying
+    @Transactional
     @Query("UPDATE Connector c SET c.status = :status WHERE c.id = :connectorId")
     void updateStatusById(@Param("connectorId") Long connectorId, @Param("status") String status);
 }

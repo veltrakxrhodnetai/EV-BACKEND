@@ -544,10 +544,20 @@ public class ChargingSessionService {
         // Physical-plug validation: do not move to payment until connector indicates plugged state.
         String connectorStatus = getConnectorStatusForSession(sessionId);
         if (!isConnectorPluggedStatus(connectorStatus)) {
+            connectorStatus = refreshConnectorStatusIfStale(sessionId, chargerOcppId, connectorNo, connectorStatus);
+        }
+        if (!isConnectorPluggedStatus(connectorStatus)) {
+            if (isAcSocketBypassEligible(sessionId, connectorStatus)) {
+                logger.warn("Session {}: bypassing plug-state check for AC/socket charger. status={}, {}",
+                        sessionId,
+                        connectorStatus,
+                        describeBypassContext(sessionId));
+            } else {
             throw new IllegalStateException(
                 "Connector is not plugged into vehicle yet (current status: " + connectorStatus + "). " +
                 "Please plug in and wait for charger status Preparing/Charging before continuing."
             );
+            }
         }
         
         logger.debug("Session {}: charger OCPP ID={}, connectorNo={}, startedBy={}", 
@@ -565,7 +575,6 @@ public class ChargingSessionService {
     /**
      * Accept payment and only then trigger OCPP RemoteStartTransaction.
      */
-    @Transactional
     public void acceptPaymentAndStartCharging(long sessionId) {
         ChargingSession session = chargingSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId));
@@ -594,10 +603,20 @@ public class ChargingSessionService {
         // Re-check plug state right before payment and RemoteStart to prevent locked PENDING_START sessions.
         String connectorStatus = getConnectorStatusForSession(sessionId);
         if (!isConnectorPluggedStatus(connectorStatus)) {
+            connectorStatus = refreshConnectorStatusIfStale(sessionId, chargerOcppId, connectorNo, connectorStatus);
+        }
+        if (!isConnectorPluggedStatus(connectorStatus)) {
+            if (isAcSocketBypassEligible(sessionId, connectorStatus)) {
+                logger.warn("Session {}: bypassing pre-start plug-state check for AC/socket charger. status={}, {}",
+                        sessionId,
+                        connectorStatus,
+                        describeBypassContext(sessionId));
+            } else {
             throw new IllegalStateException(
                 "Connector unplugged before start (current status: " + connectorStatus + "). " +
                 "Please plug in vehicle and verify connector again."
             );
+            }
         }
 
         Double preauthAmount = session.getPreauthAmount() == null ? 0.0 : session.getPreauthAmount();
@@ -625,7 +644,7 @@ public class ChargingSessionService {
         }
 
         session.setStatus("PENDING_START");
-        chargingSessionRepository.save(session);
+        chargingSessionRepository.saveAndFlush(session);
         logger.debug("Session {} marked as PENDING_START after payment", sessionId);
 
         // Send OCPP command after payment success
@@ -648,6 +667,9 @@ public class ChargingSessionService {
             connectorRepository.updateStatusById(connectorId, "Preparing");
             
             logger.info("RemoteStartTransaction sent successfully for session {}", sessionId);
+        } catch (IllegalStateException ex) {
+            logger.warn("RemoteStartTransaction validation failed for sessionId={}: {}", sessionId, ex.getMessage());
+            throw ex;
         } catch (Exception ex) {
             logger.error("Failed to send RemoteStartTransaction for sessionId={}", sessionId, ex);
             session.setStatus("PENDING_PAYMENT");
@@ -677,5 +699,98 @@ public class ChargingSessionService {
                 || "SUSPENDEDEV".equals(normalized)
                 || "SUSPENDEDEVSE".equals(normalized)
                 || "FINISHING".equals(normalized);
+    }
+
+    private String refreshConnectorStatusIfStale(long sessionId, String chargerOcppId, Integer connectorNo, String currentStatus) {
+        if (connectorNo == null || connectorNo <= 0) {
+            return currentStatus;
+        }
+
+        try {
+            // Some chargers lag local state propagation; request fresh status and wait briefly.
+            ocppWebSocketHandler.triggerMessage(chargerOcppId, "StatusNotification", connectorNo);
+        } catch (Exception ex) {
+            logger.debug("Session {}: trigger StatusNotification failed for charger={} connectorNo={}: {}",
+                    sessionId, chargerOcppId, connectorNo, ex.getMessage());
+            return currentStatus;
+        }
+
+        for (int attempt = 0; attempt < 3; attempt++) {
+            try {
+                Thread.sleep(600L);
+            } catch (InterruptedException interruptedException) {
+                Thread.currentThread().interrupt();
+                return currentStatus;
+            }
+
+            String refreshedStatus = getConnectorStatusForSession(sessionId);
+            if (isConnectorPluggedStatus(refreshedStatus)) {
+                logger.info("Session {}: connector status refreshed from {} to {} after trigger message",
+                        sessionId, currentStatus, refreshedStatus);
+                return refreshedStatus;
+            }
+
+            currentStatus = refreshedStatus;
+        }
+
+        return currentStatus;
+    }
+
+    private boolean isAcSocketBypassEligible(long sessionId, String connectorStatus) {
+        String normalizedStatus = connectorStatus == null ? "" : connectorStatus.trim().toUpperCase(Locale.ROOT);
+        if (!("AVAILABLE".equals(normalizedStatus) || "UNKNOWN".equals(normalizedStatus))) {
+            return false;
+        }
+
+        ChargingSession session = chargingSessionRepository.findByIdWithChargerAndConnector(sessionId).orElse(null);
+        if (session == null) {
+            return false;
+        }
+
+        String chargerType = (session.getCharger() == null || session.getCharger().getChargerType() == null)
+            ? ""
+            : session.getCharger().getChargerType()
+                .trim()
+                .toUpperCase(Locale.ROOT);
+        if (chargerType.contains("AC")) {
+            return true;
+        }
+
+        String connectorType = (session.getConnector() == null || session.getConnector().getType() == null)
+            ? ""
+            : session.getConnector().getType()
+                .trim()
+                .toUpperCase(Locale.ROOT);
+
+        Double chargerMaxPowerKw = session.getCharger() == null ? null : session.getCharger().getMaxPowerKw();
+        Double connectorMaxPowerKw = session.getConnector() == null ? null : session.getConnector().getMaxPowerKw();
+
+        boolean lowPowerAcLike = (chargerMaxPowerKw != null && chargerMaxPowerKw <= 22.0)
+            || (connectorMaxPowerKw != null && connectorMaxPowerKw <= 22.0);
+
+        if (lowPowerAcLike) {
+            return true;
+        }
+
+        return connectorType.contains("SOCKET")
+                || connectorType.contains("3PIN")
+                || connectorType.contains("THREE PIN")
+            || connectorType.contains("DOMESTIC")
+            || connectorType.contains("TYPE2")
+            || connectorType.contains("AC");
+        }
+
+        private String describeBypassContext(long sessionId) {
+        ChargingSession session = chargingSessionRepository.findByIdWithChargerAndConnector(sessionId).orElse(null);
+        if (session == null) {
+            return "context=unknown";
+        }
+
+        String chargerType = session.getCharger() == null ? "null" : String.valueOf(session.getCharger().getChargerType());
+        String connectorType = session.getConnector() == null ? "null" : String.valueOf(session.getConnector().getType());
+        String chargerMax = session.getCharger() == null ? "null" : String.valueOf(session.getCharger().getMaxPowerKw());
+        String connectorMax = session.getConnector() == null ? "null" : String.valueOf(session.getConnector().getMaxPowerKw());
+        return "chargerType=" + chargerType + ", connectorType=" + connectorType
+            + ", chargerMaxPowerKw=" + chargerMax + ", connectorMaxPowerKw=" + connectorMax;
     }
 }

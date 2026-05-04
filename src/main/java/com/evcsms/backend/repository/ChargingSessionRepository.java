@@ -60,6 +60,12 @@ public interface ChargingSessionRepository extends JpaRepository<ChargingSession
     @Query("SELECT c.id FROM ChargingSession cs JOIN cs.connector c WHERE cs.id = :sessionId")
     Optional<Long> findConnectorIdBySessionId(@Param("sessionId") Long sessionId);
 
+    @Query("SELECT c.chargerType FROM ChargingSession cs JOIN cs.charger c WHERE cs.id = :sessionId")
+    Optional<String> findChargerTypeBySessionId(@Param("sessionId") Long sessionId);
+
+    @Query("SELECT c.type FROM ChargingSession cs JOIN cs.connector c WHERE cs.id = :sessionId")
+    Optional<String> findConnectorTypeBySessionId(@Param("sessionId") Long sessionId);
+
         @Query("""
                         SELECT COALESCE(SUM(cs.ownerRevenue), 0)
                         FROM ChargingSession cs

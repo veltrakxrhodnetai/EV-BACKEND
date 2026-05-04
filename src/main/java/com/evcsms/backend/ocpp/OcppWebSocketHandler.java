@@ -15,8 +15,10 @@ import com.evcsms.backend.repository.OcppConfigurationRepository;
 import com.evcsms.backend.repository.OcppMessageLogRepository;
 import com.evcsms.backend.repository.TariffRepository;
 import com.evcsms.backend.service.Msg91OtpService;
+import com.evcsms.backend.service.PaymentService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -33,12 +35,14 @@ import java.util.Base64;
 import java.util.Arrays;
 import java.time.Instant;
 import java.time.LocalDateTime;
+import java.time.Duration;
 import java.time.temporal.ChronoUnit;
 import java.util.ArrayList;
 import java.util.Deque;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
@@ -65,10 +69,14 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     private final OcppConfigurationRepository ocppConfigurationRepository;
     private final OcppMessageLogRepository ocppMessageLogRepository;
     private final Msg91OtpService msg91OtpService;
+    private final PaymentService paymentService;
     private final ConcurrentHashMap<String, WebSocketSession> activeSessions = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<JsonNode>> pendingResponses = new ConcurrentHashMap<>();
     // transactionId -> latest SoC (0-100)
     private final ConcurrentHashMap<Integer, Double> latestSocByTransaction = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, Long> latestEnergyWhByTransaction = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<Integer, LocalDateTime> lastEnergyProgressAtByTransaction = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, LocalDateTime> staleChargingMitigationAt = new ConcurrentHashMap<>();
     private final Deque<Map<String, Object>> recentConnectorEvents = new ConcurrentLinkedDeque<>();
     private final ConcurrentHashMap<String, Deque<UnknownConnectorAlert>> unknownConnectorAlerts = new ConcurrentHashMap<>();
     private static final int MAX_RECENT_EVENTS = 300;
@@ -81,6 +89,18 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             "STOPPING"
         );
 
+    @Value("${app.charging.ac-no-energy-timeout-seconds:60}")
+    private int acNoEnergyTimeoutSeconds;
+
+    @Value("${app.ocpp.presence.minimum-offline-threshold-seconds:90}")
+    private int minimumOfflineThresholdSeconds;
+
+    @Value("${app.ocpp.presence.heartbeat-miss-multiplier:3}")
+    private int heartbeatMissMultiplier;
+
+    @Value("${app.ocpp.presence.stale-charging-mitigation-cooldown-seconds:120}")
+    private int staleChargingMitigationCooldownSeconds;
+
     public OcppWebSocketHandler(
             ObjectMapper objectMapper,
             ChargerRepository chargerRepository,
@@ -90,7 +110,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             MeterValueRepository meterValueRepository,
             OcppConfigurationRepository ocppConfigurationRepository,
                 OcppMessageLogRepository ocppMessageLogRepository,
-                Msg91OtpService msg91OtpService
+                Msg91OtpService msg91OtpService,
+                PaymentService paymentService
     ) {
         this.objectMapper = objectMapper;
         this.chargerRepository = chargerRepository;
@@ -101,6 +122,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         this.ocppConfigurationRepository = ocppConfigurationRepository;
         this.ocppMessageLogRepository = ocppMessageLogRepository;
         this.msg91OtpService = msg91OtpService;
+        this.paymentService = paymentService;
     }
 
     @Override
@@ -439,6 +461,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
 
     private void handleHeartbeat(WebSocketSession session, String msgId, String chargerId) throws IOException {
         updateChargerHeartbeat(chargerId);
+        enforceAcNoEnergyTimeoutOnHeartbeat(chargerId);
         sendCallResult(session, msgId, Map.of("currentTime", Instant.now().toString()));
     }
 
@@ -446,14 +469,21 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         int connectorId = payload.path("connectorId").asInt(0);
         String status = payload.path("status").asText("Unknown");
         String errorCode = payload.path("errorCode").asText("N/A");
+        boolean staleChargingWithoutSession = false;
+        int staleChargingConnectorId = connectorId;
 
         Charger charger = chargerRepository.findByOcppIdentity(chargerId)
                 .orElseThrow(() -> new IllegalStateException("Charger not found: " + chargerId));
 
         if (connectorId == 0) {
-            if (("Finishing".equalsIgnoreCase(status) || "Unavailable".equalsIgnoreCase(status))
-                    && chargingSessionRepository.findFirstByCharger_OcppIdentityAndStatusInOrderByCreatedAtDesc(
-                    chargerId, ACTIVE_SESSION_STATUSES).isEmpty()) {
+            boolean hasAnyActiveSession = chargingSessionRepository.findFirstByCharger_OcppIdentityAndStatusInOrderByCreatedAtDesc(
+                chargerId, ACTIVE_SESSION_STATUSES).isPresent();
+            if ("Charging".equalsIgnoreCase(status) && !hasAnyActiveSession) {
+            staleChargingWithoutSession = true;
+            staleChargingConnectorId = 0;
+            }
+            if (shouldNormalizeToAvailable(status)
+                && !hasAnyActiveSession) {
                 logger.info("Normalizing charge point status {} -> Available for charger {} (no active session)",
                         status, chargerId);
                 status = "Available";
@@ -464,9 +494,14 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             recordConnectorEvent("STATUS_NOTIFICATION", chargerId, 0, status, null, null,
                     "Charge point status updated, errorCode=" + errorCode);
         } else if (connectorId >= 1) {
-            if (("Finishing".equalsIgnoreCase(status) || "Unavailable".equalsIgnoreCase(status))
-                    && !chargingSessionRepository.existsByCharger_IdAndConnectorNoAndStatusIn(
-                    charger.getId(), connectorId, ACTIVE_SESSION_STATUSES)) {
+            boolean hasActiveSession = chargingSessionRepository.existsByCharger_IdAndConnectorNoAndStatusIn(
+                    charger.getId(), connectorId, ACTIVE_SESSION_STATUSES);
+
+            if ("Charging".equalsIgnoreCase(status) && !hasActiveSession) {
+                staleChargingWithoutSession = true;
+            }
+
+            if (shouldNormalizeToAvailable(status) && !hasActiveSession) {
                 logger.info("Normalizing connector status {} -> Available for charger {} connector {} (no active session)",
                         status, chargerId, connectorId);
                 status = "Available";
@@ -503,7 +538,62 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
 
         logger.debug("StatusNotification processed chargerId={}, connectorId={}, status={}", chargerId, connectorId, status);
         sendCallResult(session, msgId, Map.of());
+
+        // Important: only send further OCPP commands after ACKing StatusNotification to avoid call deadlocks.
+        if (staleChargingWithoutSession) {
+            mitigateStaleChargingWithoutSession(chargerId, staleChargingConnectorId);
+        }
     }
+
+    private boolean shouldNormalizeToAvailable(String status) {
+        return "Finishing".equalsIgnoreCase(status)
+                || "Unavailable".equalsIgnoreCase(status)
+                || "Charging".equalsIgnoreCase(status);
+    }
+
+        private void mitigateStaleChargingWithoutSession(String chargerId, int connectorId) {
+        String key = chargerId + ":" + connectorId;
+        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime lastAttempt = staleChargingMitigationAt.get(key);
+        if (lastAttempt != null && ChronoUnit.SECONDS.between(lastAttempt, now) < Math.max(15, staleChargingMitigationCooldownSeconds)) {
+            return;
+        }
+        staleChargingMitigationAt.put(key, now);
+
+        logger.warn("Detected stale Charging state without active session for charger={} connector={}. Sending mitigation commands.",
+            chargerId, connectorId);
+        recordConnectorEvent("STALE_CHARGING_DETECTED", chargerId, connectorId, "CHARGING", null, null,
+            "No active session exists but charger reported Charging");
+
+        try {
+            OcppCommandResult inop = changeAvailability(chargerId, connectorId, "Inoperative");
+            recordConnectorEvent("STALE_CHARGING_MITIGATION", chargerId, connectorId, inop.status(), null, null,
+                "ChangeAvailability(Inoperative) sent for stale charging on connectorId=" + connectorId);
+
+            if (!inop.isAccepted()) {
+            OcppCommandResult stationInop = changeAvailability(chargerId, 0, "Inoperative");
+            recordConnectorEvent("STALE_CHARGING_MITIGATION", chargerId, 0, stationInop.status(), null, null,
+                "ChangeAvailability(Inoperative) sent for whole charge point after connector-level rejection");
+
+            if (!stationInop.isAccepted()) {
+                OcppCommandResult softReset = reset(chargerId, "Soft");
+                recordConnectorEvent("STALE_CHARGING_MITIGATION", chargerId, connectorId, softReset.status(), null, null,
+                    "Soft Reset sent after ChangeAvailability rejection");
+
+                if (!softReset.isAccepted()) {
+                OcppCommandResult hardReset = reset(chargerId, "Hard");
+                recordConnectorEvent("STALE_CHARGING_MITIGATION", chargerId, connectorId, hardReset.status(), null, null,
+                    "Hard Reset sent after Soft Reset rejection");
+                }
+            }
+            }
+        } catch (Exception ex) {
+            logger.warn("Stale charging mitigation failed for charger={} connector={}: {}",
+                chargerId, connectorId, ex.getMessage());
+            recordConnectorEvent("STALE_CHARGING_MITIGATION_FAILED", chargerId, connectorId, "FAILED", null, null,
+                "Mitigation failed: " + ex.getMessage());
+        }
+        }
 
     private void handleStartTransaction(WebSocketSession session, String msgId, String chargerId, JsonNode payload) throws IOException {
         int connectorId = payload.path("connectorId").asInt(1);
@@ -514,13 +604,46 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         Charger charger = chargerRepository.findByOcppIdentity(chargerId)
             .orElseThrow(() -> new IllegalStateException("Charger not found: " + chargerId));
 
-        ChargingSession chargingSession = chargingSessionRepository
+        Optional<ChargingSession> pendingStartSession = chargingSessionRepository
             .findFirstByCharger_IdAndConnectorNoAndStatusOrderByCreatedAtDesc(
                 charger.getId(),
-                        connectorId,
+                connectorId,
                 "PENDING_START"
-                )
-            .orElseThrow(() -> new IllegalStateException("No pending session for charger " + chargerId + " connector " + connectorId));
+            );
+
+        if (pendingStartSession.isEmpty()) {
+            Optional<ChargingSession> activeSession = chargingSessionRepository
+                .findFirstByCharger_IdAndConnectorNoAndStatusOrderByCreatedAtDesc(
+                    charger.getId(),
+                    connectorId,
+                    "ACTIVE"
+                );
+
+            if (activeSession.isPresent() && activeSession.get().getOcppTransactionId() != null) {
+                Integer existingTxnId = activeSession.get().getOcppTransactionId();
+                logger.warn("StartTransaction duplicate/late for chargerId={} connectorId={}, reusing active sessionId={} transactionId={}",
+                    chargerId, connectorId, activeSession.get().getId(), existingTxnId);
+                sendCallResult(session, msgId, Map.of(
+                    "transactionId", existingTxnId,
+                    "idTagInfo", Map.of("status", "Accepted")
+                ));
+                return;
+            }
+
+            logger.warn("StartTransaction without pending session chargerId={} connectorId={} idTag={}",
+                chargerId, connectorId, idTag);
+            recordConnectorEvent("START_TRANSACTION_ORPHAN", chargerId, connectorId, "REJECTED", null, null,
+                "No pending/active session when StartTransaction arrived");
+            sendCallResult(session, msgId, Map.of(
+                "transactionId", 0,
+                "idTagInfo", Map.of("status", "Invalid")
+            ));
+            // If charger attempted to start without a valid CMS session, force it back to safe state.
+            mitigateStaleChargingWithoutSession(chargerId, connectorId);
+            return;
+        }
+
+        ChargingSession chargingSession = pendingStartSession.get();
 
         int nextOcppTransactionId = chargingSessionRepository.findMaxOcppTransactionId() + 1;
         chargingSession.setOcppTransactionId(nextOcppTransactionId);
@@ -549,7 +672,14 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         ));
     }
 
+    public void enforceNoSessionCharging(String chargerId, Integer connectorId) {
+        int safeConnectorId = connectorId == null ? 0 : connectorId;
+        mitigateStaleChargingWithoutSession(chargerId, safeConnectorId);
+    }
+
     private void handleMeterValues(WebSocketSession session, String msgId, JsonNode payload) throws IOException {
+        String chargerId = extractChargerId(session);
+        int connectorId = payload.path("connectorId").asInt(0);
         int transactionId = payload.path("transactionId").asInt(-1);
         if (transactionId < 0) {
             sendCallResult(session, msgId, Map.of());
@@ -560,8 +690,25 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
                 .orElse(null);
 
         if (chargingSession == null) {
-            logger.warn("MeterValues: no session found for transactionId={}, sending empty CallResult", transactionId);
+            logger.warn("MeterValues: no session found for chargerId={} connectorId={} transactionId={}, sending empty CallResult",
+                chargerId, connectorId, transactionId);
             sendCallResult(session, msgId, Map.of());
+
+            // Immediate stop attempt for stale transaction resuming after offline recovery.
+            try {
+                boolean stopped = sendRemoteStop(chargerId, transactionId);
+                recordConnectorEvent("STALE_TX_REMOTE_STOP", chargerId, connectorId, stopped ? "ACCEPTED" : "REJECTED",
+                        null, transactionId,
+                        "RemoteStop attempted for unknown transaction after reconnect");
+            } catch (Exception ex) {
+                recordConnectorEvent("STALE_TX_REMOTE_STOP", chargerId, connectorId, "FAILED",
+                        null, transactionId,
+                        "RemoteStop failed for unknown transaction: " + ex.getMessage());
+            }
+
+            // Charger may have resumed old transaction after reconnect/power restore.
+            // Best-effort stop to prevent physical charging without an active CMS session.
+            mitigateStaleChargingWithoutSession(chargerId, connectorId <= 0 ? 0 : connectorId);
             return;
         }
 
@@ -622,6 +769,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             latestSocByTransaction.merge(transactionId, boundedSoc, Math::max);
         }
 
+        updateEnergyProgress(chargingSession, transactionId, energyWh);
+
         // CRITICAL: ACK the MeterValues message to the charger BEFORE sending RemoteStopTransaction.
         // Without this, the charger waits for the CallResult of MeterValues while we wait for
         // its Accepted on RemoteStop → deadlock → WebSocket disconnect.
@@ -629,6 +778,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
 
         // Now safe to send RemoteStop or Reset — charger is free to process new commands.
         enforceAutoStopLimit(chargingSession, transactionId, energyWh);
+        enforceAcNoEnergyTimeout(chargingSession, transactionId, energyWh, null);
 
         if (socValue >= 100.0 && "ACTIVE".equalsIgnoreCase(chargingSession.getStatus())) {
             logger.info("Auto-stop triggered for full battery sessionId={}, SoC={}", chargingSession.getId(), socValue);
@@ -791,6 +941,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         chargingSession.setChargerId(charger.getId());
         chargingSession.setStationId(charger.getStationId());
         chargingSession.setOwnerId(charger.getOwnerId());
+        settlePaymentAndRefund(chargingSession);
+        generateInvoice(chargingSession);
         chargingSession.setStatus("COMPLETED");
         chargingSession.setEndedAt(LocalDateTime.now());
         chargingSessionRepository.save(chargingSession);
@@ -810,13 +962,189 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             recordConnectorEvent("SESSION_COMPLETED", charger.getOcppIdentity(), chargingSession.getConnectorNo(), "COMPLETED",
                     chargingSession.getId(), transactionId,
                     "Session completed reason=" + reason + ", total=" + total);
-            latestSocByTransaction.remove(transactionId);
+            clearTransactionTracking(transactionId);
         }
+    }
+
+    private void enforceAcNoEnergyTimeoutOnHeartbeat(String chargerId) {
+        chargingSessionRepository
+                .findFirstByCharger_OcppIdentityAndStatusInOrderByCreatedAtDesc(chargerId, Set.of("ACTIVE"))
+                .ifPresent(session -> enforceAcNoEnergyTimeout(session, session.getOcppTransactionId(), null, chargerId));
+    }
+
+    private void enforceAcNoEnergyTimeout(ChargingSession session, Integer transactionId, Long currentMeterWh, String chargerIdFromHeartbeat) {
+        if (session == null || !"ACTIVE".equalsIgnoreCase(session.getStatus())) {
+            return;
+        }
+
+        if (!isAcOrSocketSession(session)) {
+            return;
+        }
+
+        long meterStart = session.getMeterStart() == null ? 0L : session.getMeterStart();
+        LocalDateTime now = LocalDateTime.now();
+
+        long latestEnergyWh = currentMeterWh != null ? currentMeterWh : meterValueRepository.findLatestBySessionId(session.getId())
+                .map(MeterValue::getEnergyWh)
+                .orElse(meterStart);
+
+        if (transactionId != null) {
+            updateEnergyProgress(session, transactionId, latestEnergyWh);
+        }
+
+        LocalDateTime progressAt = null;
+        if (transactionId != null) {
+            progressAt = lastEnergyProgressAtByTransaction.get(transactionId);
+        }
+        if (progressAt == null) {
+            progressAt = session.getStartedAt() != null ? session.getStartedAt() : now;
+        }
+
+        long idleSeconds = Duration.between(progressAt, now).getSeconds();
+        if (idleSeconds < Math.max(15, acNoEnergyTimeoutSeconds)) {
+            return;
+        }
+
+        String chargerIdentity = resolveChargerIdentity(session, chargerIdFromHeartbeat);
+        String reason = latestEnergyWh <= meterStart ? "AC_NO_ENERGY_AT_START" : "AC_NO_ENERGY_TIMEOUT";
+
+        logger.info(
+                "Auto-stopping AC/sessionId={} tx={} reason={} idle={}s meterStart={} latestEnergy={}",
+                session.getId(), transactionId, reason, idleSeconds, meterStart, latestEnergyWh
+        );
+
+        if (chargerIdentity != null && transactionId != null) {
+            try {
+                sendRemoteStop(chargerIdentity, transactionId);
+            } catch (Exception ex) {
+                logger.debug("RemoteStop best-effort failed for sessionId={} tx={}: {}",
+                        session.getId(), transactionId, ex.getMessage());
+            }
+        }
+
+        completeSessionFromMeter(session, latestEnergyWh, reason, transactionId);
+
+        recordConnectorEvent(
+                "AUTO_STOP_NO_ENERGY",
+                chargerIdentity,
+                session.getConnectorNo(),
+                "COMPLETED",
+                session.getId(),
+                transactionId,
+                "Auto-stop due to no energy progress for " + idleSeconds + "s"
+        );
+    }
+
+    private void updateEnergyProgress(ChargingSession session, Integer transactionId, long currentMeterWh) {
+        if (transactionId == null) {
+            return;
+        }
+
+        long meterStart = session.getMeterStart() == null ? 0L : session.getMeterStart();
+        Long previous = latestEnergyWhByTransaction.put(transactionId, currentMeterWh);
+        LocalDateTime now = LocalDateTime.now();
+
+        if (previous == null) {
+            LocalDateTime baseline = session.getStartedAt() != null ? session.getStartedAt() : now;
+            if (currentMeterWh > meterStart) {
+                lastEnergyProgressAtByTransaction.put(transactionId, now);
+            } else {
+                lastEnergyProgressAtByTransaction.put(transactionId, baseline);
+            }
+            return;
+        }
+
+        if (currentMeterWh > previous) {
+            lastEnergyProgressAtByTransaction.put(transactionId, now);
+        }
+    }
+
+    private boolean isAcOrSocketSession(ChargingSession session) {
+        Long sessionId = session.getId();
+        if (sessionId == null) {
+            return false;
+        }
+
+        String chargerType = chargingSessionRepository.findChargerTypeBySessionId(sessionId)
+                .map(value -> value == null ? "" : value.toUpperCase())
+                .orElse("");
+        String connectorType = chargingSessionRepository.findConnectorTypeBySessionId(sessionId)
+                .map(value -> value == null ? "" : value.toUpperCase())
+                .orElse("");
+
+        if (chargerType.contains("AC") || connectorType.contains("AC") || connectorType.contains("SOCKET")) {
+            return true;
+        }
+
+        return connectorType.contains("TYPE2") || connectorType.contains("TYPE 2")
+                || connectorType.contains("TYPE1") || connectorType.contains("TYPE 1");
+    }
+
+    private String resolveChargerIdentity(ChargingSession session, String fallbackChargerId) {
+        if (session.getId() != null) {
+            Optional<String> chargerIdentity = chargingSessionRepository.findChargerOcppIdentityBySessionId(session.getId());
+            if (chargerIdentity.isPresent()) {
+                return chargerIdentity.get();
+            }
+        }
+        return fallbackChargerId;
+    }
+
+    private void clearTransactionTracking(Integer transactionId) {
+        latestSocByTransaction.remove(transactionId);
+        latestEnergyWhByTransaction.remove(transactionId);
+        lastEnergyProgressAtByTransaction.remove(transactionId);
     }
 
     private double calculateTotalWithCharges(double energyKwh, Tariff tariff) {
         double base = Math.max(0.0, energyKwh) * tariff.getPricePerKwh();
         return roundCurrency(base * (1.0 + GST_PERCENT / 100.0));
+    }
+
+    private void settlePaymentAndRefund(ChargingSession session) {
+        String preauthId = session.getPreauthId();
+        Double preauthAmount = session.getPreauthAmount();
+        Double totalAmount = session.getTotalAmount();
+
+        if (preauthId == null || preauthId.isBlank() || preauthAmount == null || totalAmount == null) {
+            return;
+        }
+
+        try {
+            paymentService.capture(preauthId, BigDecimal.valueOf(totalAmount));
+            session.setPaymentStatus("CAPTURED");
+
+            double unusedAmount = roundCurrency(Math.max(0.0, preauthAmount - totalAmount));
+            if (unusedAmount > 0.01) {
+                PaymentService.RefundResult refundResult = paymentService.refund(
+                        preauthId,
+                        BigDecimal.valueOf(unusedAmount)
+                );
+                if (refundResult.success()) {
+                    session.setRefundAmount(unusedAmount);
+                    session.setRefundId(refundResult.refundId());
+                }
+            } else {
+                session.setRefundAmount(0.0);
+                session.setRefundId(null);
+            }
+        } catch (Exception ex) {
+            logger.error("Payment settlement failed for session {} in OCPP completion: {}",
+                    session.getId(), ex.getMessage(), ex);
+            session.setPaymentStatus("SETTLEMENT_FAILED");
+        }
+    }
+
+    private void generateInvoice(ChargingSession session) {
+        try {
+            LocalDateTime endedAt = session.getEndedAt() != null ? session.getEndedAt() : LocalDateTime.now();
+            String month = endedAt.format(java.time.format.DateTimeFormatter.ofPattern("yyyyMM"));
+            String invoiceNumber = String.format("INV-%s-%06d", month, session.getId());
+            session.setInvoiceNumber(invoiceNumber);
+            session.setInvoiceUrl(String.format("/api/sessions/%d/invoice", session.getId()));
+        } catch (Exception ex) {
+            logger.warn("Failed to generate invoice for session {}: {}", session.getId(), ex.getMessage());
+        }
     }
 
     private double resolveEffectiveAmountCap(ChargingSession session) {
@@ -1041,14 +1369,28 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         if (session == null || !session.isOpen()) {
             return false;
         }
-        // Also verify via last heartbeat: if no heartbeat in 10 minutes treat as stale/offline
+        long offlineThresholdSeconds = resolveOfflineThresholdSeconds(ocppIdentity);
         return chargerRepository.findByOcppIdentity(ocppIdentity)
                 .map(charger -> {
                     LocalDateTime lastHb = charger.getLastHeartbeat();
                     if (lastHb == null) return false;
-                    return lastHb.isAfter(LocalDateTime.now().minusMinutes(10));
+                    return lastHb.isAfter(LocalDateTime.now().minusSeconds(offlineThresholdSeconds));
                 })
                 .orElse(false);
+    }
+
+    public long resolveOfflineThresholdSeconds(String ocppIdentity) {
+        long configuredHeartbeat = ocppConfigurationRepository.findByChargePointIdentity(ocppIdentity)
+                .map(OcppConfiguration::getHeartbeatIntervalSeconds)
+                .filter(value -> value != null && value > 0)
+                .map(Integer::longValue)
+                .orElse(0L);
+
+        long dynamicThreshold = configuredHeartbeat > 0
+                ? configuredHeartbeat * Math.max(2, heartbeatMissMultiplier)
+                : 0L;
+
+        return Math.max(Math.max(30, minimumOfflineThresholdSeconds), dynamicThreshold);
     }
 
     public List<Map<String, Object>> getRecentConnectorEvents(int limit) {
