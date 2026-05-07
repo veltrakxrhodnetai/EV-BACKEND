@@ -162,8 +162,11 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
 
     /**
      * Extracts the token from the HTTP Authorization header.
-     * Supports both "Authorization: Bearer <token>" and
-     * OCPP Basic Auth "Authorization: Basic base64(identity:password)" where password = token.
+     * Supports:
+     *   1. "Authorization: Bearer <token>"
+     *   2. OCPP Basic Auth "Authorization: Basic base64(identity:password)" — password is the token
+     *   3. Bare Basic Auth "Authorization: Basic base64(token)" — no colon, whole decoded value is the token
+     *      (used by some charger firmware e.g. BelectriQ which sends just the token base64-encoded)
      */
     private String extractBearerToken(WebSocketSession session) {
         List<String> authHeaders = session.getHandshakeHeaders().get("Authorization");
@@ -182,6 +185,10 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
                 int colon = decoded.indexOf(':');
                 if (colon >= 0) {
                     return decoded.substring(colon + 1);
+                }
+                // No colon: treat entire decoded value as the token (bare token Basic auth)
+                if (!decoded.isBlank()) {
+                    return decoded;
                 }
             } catch (IllegalArgumentException ignored) {
                 // malformed Base64
