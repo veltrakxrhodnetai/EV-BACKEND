@@ -5,6 +5,7 @@ com\evcsms\backend\model\Owner.class
 com\evcsms\backend\dto\RequestOtpResponse.class
 com\evcsms\backend\controller\AdminPortalController.class
 com\evcsms\backend\model\Settlement.class
+com\evcsms\backend\controller\AdminPortalController$OwnerUpdateRequest.class
 com\evcsms\backend\controller\OwnerAuthController.class
 com\evcsms\backend\repository\StationSettlementRepository.class
 com\evcsms\backend\controller\CustomerAuthController.class
@@ -12,6 +13,7 @@ com\evcsms\backend\controller\SettlementController$MarkSettlementRequest.class
 com\evcsms\backend\repository\RfidRepository.class
 com\evcsms\controller\ChargerController.class
 com\evcsms\backend\repository\CustomerRepository.class
+com\evcsms\backend\controller\OwnerOperationsController$OwnerCommandResponse.class
 com\evcsms\backend\repository\RfidRegistryRepository.class
 com\evcsms\backend\controller\AdminPortalController$StationFinancialGroup.class
 com\evcsms\backend\controller\AdminPortalController$RevenueDistribution.class
@@ -56,6 +58,7 @@ com\evcsms\backend\controller\AuthController.class
 com\evcsms\backend\controller\AdminPortalController$FinancialDashboardResponse.class
 com\evcsms\service\ChargerService.class
 com\evcsms\backend\controller\MockPaymentGatewayController.class
+com\evcsms\backend\controller\OwnerOperationsController.class
 com\evcsms\backend\model\Tariff.class
 com\evcsms\backend\service\OcppOfflineWatchdogService.class
 com\evcsms\backend\service\PaymentService.class
@@ -104,6 +107,7 @@ com\evcsms\backend\ocpp\OcppWebSocketHandler$UnknownConnectorAlert.class
 com\evcsms\backend\controller\AdminPortalController$DashboardSummaryResponse.class
 com\evcsms\backend\dto\MockCaptureRequest.class
 com\evcsms\backend\websocket\OcppWebSocketHandler.class
+com\evcsms\backend\controller\OwnerOperationsController$OwnerChargerResetRequest.class
 com\evcsms\backend\repository\MeterValueRepository.class
 com\evcsms\backend\simulator\ChargerSimulator.class
 com\evcsms\backend\controller\OwnerAuthController$OwnerAuthResponse.class
@@ -144,6 +148,7 @@ com\evcsms\backend\repository\PaymentRepository.class
 com\evcsms\backend\service\OwnerAuthService.class
 com\evcsms\backend\controller\StationController$StationSummaryResponse.class
 com\evcsms\backend\model\RfidStatus.class
+com\evcsms\backend\controller\OwnerOperationsController$OwnerChargerResponse.class
 com\evcsms\backend\repository\TariffRepository.class
 com\evcsms\backend\websocket\SessionWebSocketHandler.class
 com\evcsms\backend\dto\AdminLoginRequest.class
@@ -171,6 +176,7 @@ com\evcsms\backend\controller\AdminPortalController$AssignedStationWithOwnerResp
 com\evcsms\backend\controller\AdminPortalController$TariffResponse.class
 com\evcsms\backend\controller\StationController$TariffResponse.class
 com\evcsms\backend\dto\SendOtpRequest$OtpPurpose.class
+com\evcsms\backend\controller\OwnerOperationsController$OwnerConnectorResponse.class
 com\evcsms\backend\repository\StationRepository.class
 com\evcsms\backend\controller\AdminPortalController$OwnerCreateRequest.class
 com\evcsms\backend\dto\AdminChargerRequest.class
@@ -185,6 +191,7 @@ com\evcsms\backend\controller\AdminPortalController$OwnerFinancialGroup.class
 com\evcsms\backend\controller\OwnerAuthController$StationInfo.class
 com\evcsms\backend\service\AdminAuthService$LoginResult.class
 com\evcsms\backend\controller\AdminPortalController$StationTariffRequest.class
+com\evcsms\backend\controller\OwnerOperationsController$OwnerFinancialSummaryResponse.class
 com\evcsms\backend\dto\StartSessionResponse.class
 com\evcsms\backend\config\WebSocketConfig.class
 com\evcsms\backend\controller\AdminPortalController$OcppTriggerMessageRequest.class

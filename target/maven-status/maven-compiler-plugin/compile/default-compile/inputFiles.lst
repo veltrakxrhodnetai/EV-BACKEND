@@ -14,6 +14,7 @@ C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\CustomerAuthControl
 C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\MockPaymentGatewayController.java
 C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\OwnerAuthController.java
 C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\OwnerDashboardController.java
+C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\OwnerOperationsController.java
 C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\PaymentController.java
 C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\SessionController.java
 C:\EV\EV-BACKEND\src\main\java\com\evcsms\backend\controller\SettlementController.java

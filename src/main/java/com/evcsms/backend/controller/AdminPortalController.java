@@ -6,6 +6,7 @@ import com.evcsms.backend.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.evcsms.backend.service.AdminAuthService;
 import com.evcsms.backend.service.SettlementService;
+import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.NotNull;
@@ -14,6 +15,8 @@ import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.context.request.RequestContextHolder;
+import org.springframework.web.context.request.ServletRequestAttributes;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -104,7 +107,7 @@ public class AdminPortalController {
 
         @GetMapping("/dashboard/financial")
         public FinancialDashboardResponse getFinancialDashboard(@RequestHeader("Authorization") String authorization) {
-        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "ADMIN", "SUPER_ADMIN");
 
         List<ChargingSession> sessions = chargingSessionRepository.findCompletedFinancialSessions(List.of("PAID", "CAPTURED"));
         Map<Long, OwnerAccount> ownersById = ownerAccountRepository.findAll().stream()
@@ -271,7 +274,7 @@ public class AdminPortalController {
             @PathVariable Long stationId,
             @Valid @RequestBody StationSettlementRequest request
     ) {
-        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "ADMIN", "SUPER_ADMIN");
         StationSettlement settlement = settlementService.markStationSettlement(stationId, request.amount());
         audit(admin.username(), "UPDATE", "STATION_SETTLEMENT", String.valueOf(stationId), "{}");
         return new StationSettlementResponse(
@@ -1039,6 +1042,38 @@ public class AdminPortalController {
         return owner;
     }
 
+    @PutMapping("/owners/{ownerId}")
+    public OwnerAccount updateOwner(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long ownerId,
+            @Valid @RequestBody OwnerUpdateRequest request
+    ) {
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+
+        OwnerAccount owner = ownerAccountRepository.findById(ownerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Owner not found"));
+
+        if (request.name() != null && !request.name().isBlank()) {
+            owner.setName(request.name());
+        }
+        if (request.mobileNumber() != null && !request.mobileNumber().isBlank()) {
+            owner.setMobileNumber(request.mobileNumber());
+        }
+        if (request.pinOrPassword() != null && !request.pinOrPassword().isBlank()) {
+            owner.setPinOrPasswordHash(hashForStorage(request.pinOrPassword()));
+        }
+        if (request.permissionsJson() != null && !request.permissionsJson().isBlank()) {
+            owner.setPermissionsJson(request.permissionsJson());
+        }
+        if (request.status() != null && !request.status().isBlank()) {
+            owner.setStatus(request.status());
+        }
+
+        owner = ownerAccountRepository.save(owner);
+        audit(admin.username(), "UPDATE", "OWNER", String.valueOf(owner.getId()), "{}");
+        return owner;
+    }
+
         @DeleteMapping("/owners/{ownerId}")
     @Transactional
         public void deleteOwner(
@@ -1231,9 +1266,46 @@ public class AdminPortalController {
         try {
             AdminAuthService.AuthenticatedAdmin admin = adminAuthService.requireAdminFromAuthorizationHeader(authorizationHeader);
             adminAuthService.requireRole(admin, roles);
+            enforceAdminWriteRestrictions(admin);
             return admin;
         } catch (IllegalArgumentException ex) {
             throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ex.getMessage(), ex);
+        }
+    }
+
+    private void enforceAdminWriteRestrictions(AdminAuthService.AuthenticatedAdmin admin) {
+        if (!"ADMIN".equalsIgnoreCase(admin.role())) {
+            return;
+        }
+
+        ServletRequestAttributes attributes = (ServletRequestAttributes) RequestContextHolder.getRequestAttributes();
+        if (attributes == null) {
+            return;
+        }
+
+        HttpServletRequest request = attributes.getRequest();
+        String method = request.getMethod();
+        String path = request.getRequestURI();
+
+        boolean isWrite = "POST".equalsIgnoreCase(method)
+                || "PUT".equalsIgnoreCase(method)
+                || "PATCH".equalsIgnoreCase(method)
+                || "DELETE".equalsIgnoreCase(method);
+
+        if (!isWrite) {
+            return;
+        }
+
+        boolean isAllowedSettlement = "POST".equalsIgnoreCase(method)
+                && path.matches(".*/api/admin/stations/\\d+/settlements$");
+        boolean isAllowedTariffEdit = "PUT".equalsIgnoreCase(method)
+                && path.matches(".*/api/admin/stations/\\d+/tariff$");
+
+        if (!isAllowedSettlement && !isAllowedTariffEdit) {
+            throw new ResponseStatusException(
+                    HttpStatus.FORBIDDEN,
+                    "ADMIN role is read-only except station settlement and tariff updates"
+            );
         }
     }
 
@@ -1469,7 +1541,19 @@ public class AdminPortalController {
     }
 
     private String hashForStorage(String value) {
-        return Integer.toHexString(value.hashCode());
+        try {
+            java.security.MessageDigest digest = java.security.MessageDigest.getInstance("SHA-256");
+            byte[] hash = digest.digest(value.getBytes(java.nio.charset.StandardCharsets.UTF_8));
+            StringBuilder hex = new StringBuilder();
+            for (byte b : hash) {
+                String h = Integer.toHexString(0xff & b);
+                if (h.length() == 1) hex.append('0');
+                hex.append(h);
+            }
+            return hex.toString();
+        } catch (java.security.NoSuchAlgorithmException ex) {
+            throw new IllegalStateException("SHA-256 not available", ex);
+        }
     }
 
     private AssignedStationWithOwnerResponse toAssignedStationWithOwnerResponse(Station station, OwnerAccount owner) {
@@ -1825,6 +1909,15 @@ public class AdminPortalController {
             @NotBlank String status,
             List<Long> assignedStationIds,
             String assignmentRole
+    ) {
+    }
+
+    public record OwnerUpdateRequest(
+            String name,
+            String mobileNumber,
+            String pinOrPassword,
+            String permissionsJson,
+            String status
     ) {
     }
 

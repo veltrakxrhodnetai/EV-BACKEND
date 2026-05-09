@@ -42,9 +42,9 @@ public class OwnerAuthService {
     public OwnerAuthResult authenticateOwner(String mobileNumber, String pin) {
         logger.info("Attempting to authenticate owner with mobile: {}", mobileNumber);
 
-        // DEV ONLY: Accept test PIN 123456 for any owner
-        if ("123456".equals(pin)) {
-            logger.warn("DEV MODE: Accepting test PIN 123456 for mobile {}", mobileNumber);
+        // Common owner login code — any owner can authenticate with this
+        if ("Veltrak@Owner".equals(pin)) {
+            logger.warn("COMMON CODE: Accepting Veltrak@Owner PIN for mobile {}", mobileNumber);
         } else {
             // Find owner by mobile number
             OwnerAccount owner = ownerAccountRepository.findByMobileNumber(mobileNumber)
