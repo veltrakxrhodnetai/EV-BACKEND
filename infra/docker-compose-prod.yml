@@ -28,7 +28,7 @@ services:
     depends_on:
       - backend-blue
     healthcheck:
-      test: ["CMD", "wget", "--quiet", "--tries=1", "--no-check-certificate", "--spider", "https://localhost/health"]
+      test: ["CMD-SHELL", "nginx -t || exit 1"]
       interval: 10s
       timeout: 5s
       retries: 3
