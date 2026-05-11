@@ -36,4 +36,8 @@ public interface ConnectorRepository extends JpaRepository<Connector, Long> {
     @Transactional
     @Query("UPDATE Connector c SET c.status = :status WHERE c.id = :connectorId")
     void updateStatusById(@Param("connectorId") Long connectorId, @Param("status") String status);
+
+    @Modifying
+    @Transactional
+    long deleteByCharger_Id(Long chargerId);
 }

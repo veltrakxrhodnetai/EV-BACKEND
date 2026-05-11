@@ -10,6 +10,12 @@ import java.util.Optional;
 public interface CompletedChargingLogRepository extends JpaRepository<CompletedChargingLog, Long> {
     Optional<CompletedChargingLog> findBySessionId(Long sessionId);
 
+    boolean existsByStationId(Long stationId);
+
+    boolean existsByChargerId(Long chargerId);
+
+    boolean existsByPhoneNumber(String phoneNumber);
+
     List<CompletedChargingLog> findTop200ByOrderByPaymentCompletedAtDesc();
 
     List<CompletedChargingLog> findTop200ByStationIdInOrderByPaymentCompletedAtDesc(Collection<Long> stationIds);

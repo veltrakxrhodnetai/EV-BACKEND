@@ -344,6 +344,38 @@ public class AdminPortalController {
         return station;
     }
 
+    @DeleteMapping("/stations/{stationId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void deleteStation(@RequestHeader("Authorization") String authorization, @PathVariable Long stationId) {
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+
+        Station station = stationRepository.findById(stationId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Station not found"));
+
+        if (chargerRepository.existsByStation_Id(stationId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot delete station: remove all chargers under this station first");
+        }
+
+        if (chargingSessionRepository.existsByStationId(stationId)
+                || completedChargingLogRepository.existsByStationId(stationId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot delete station: charging history exists for this station");
+        }
+
+        ownerStationAssignmentRepository.deleteByStationId(stationId);
+        if (tariffRepository.existsByStation_Id(stationId)) {
+            tariffRepository.deleteByStation_Id(stationId);
+        }
+        if (stationSettlementRepository.existsByStationId(stationId)) {
+            stationSettlementRepository.deleteByStationId(stationId);
+        }
+
+        stationRepository.delete(station);
+        audit(admin.username(), "DELETE", "STATION", String.valueOf(stationId), "{}");
+    }
+
         @PutMapping("/stations/{stationId}/owner")
         public AssignedStationWithOwnerResponse assignOwnerToStation(
             @RequestHeader("Authorization") String authorization,
@@ -430,6 +462,26 @@ public class AdminPortalController {
 
         audit(admin.username(), "UPDATE", "CHARGER", String.valueOf(charger.getId()), "{}");
         return charger;
+    }
+
+    @DeleteMapping("/chargers/{chargerId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void deleteCharger(@RequestHeader("Authorization") String authorization, @PathVariable Long chargerId) {
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+
+        Charger charger = chargerRepository.findById(chargerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Charger not found"));
+
+        if (chargingSessionRepository.existsByCharger_Id(chargerId)
+                || completedChargingLogRepository.existsByChargerId(chargerId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot delete charger: charging history exists for this charger");
+        }
+
+        connectorRepository.deleteByCharger_Id(chargerId);
+        chargerRepository.delete(charger);
+        audit(admin.username(), "DELETE", "CHARGER", String.valueOf(chargerId), "{}");
     }
 
     @PatchMapping("/chargers/{chargerId}/enable")
@@ -1176,6 +1228,32 @@ public class AdminPortalController {
         customer = customerRepository.save(customer);
         audit(admin.username(), "UNBLOCK", "USER", String.valueOf(userId), "{}");
         return customer;
+    }
+
+    @DeleteMapping("/users/{userId}")
+    @ResponseStatus(HttpStatus.NO_CONTENT)
+    @Transactional
+    public void deleteUser(@RequestHeader("Authorization") String authorization, @PathVariable Long userId) {
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+
+        Customer customer = customerRepository.findById(userId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "User not found"));
+
+        if (rfidRegistryRepository.existsByLinkedUserId(userId)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot delete user: unlink RFID tags before deleting");
+        }
+
+        String phoneNumber = customer.getPhoneNumber();
+        if (phoneNumber != null
+                && (chargingSessionRepository.existsByPhoneNumber(phoneNumber)
+                || completedChargingLogRepository.existsByPhoneNumber(phoneNumber))) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT,
+                    "Cannot delete user: charging history exists for this user");
+        }
+
+        customerRepository.delete(customer);
+        audit(admin.username(), "DELETE", "USER", String.valueOf(userId), "{}");
     }
 
     @GetMapping("/users/{userId}/sessions")

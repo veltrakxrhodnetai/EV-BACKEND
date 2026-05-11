@@ -47,4 +47,8 @@ public interface OwnerStationAssignmentRepository extends JpaRepository<OwnerSta
     @Modifying
     @Transactional
     long deleteByOwnerId(Long ownerId);
+
+    @Modifying
+    @Transactional
+    long deleteByStationId(Long stationId);
 }

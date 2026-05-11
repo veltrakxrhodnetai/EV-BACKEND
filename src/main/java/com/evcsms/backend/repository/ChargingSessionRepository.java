@@ -34,6 +34,12 @@ public interface ChargingSessionRepository extends JpaRepository<ChargingSession
 
     boolean existsByConnector_Id(Long connectorId);
 
+    boolean existsByCharger_Id(Long chargerId);
+
+    boolean existsByStationId(Long stationId);
+
+    boolean existsByPhoneNumber(String phoneNumber);
+
     Optional<ChargingSession> findFirstByOcppTransactionIdOrderByCreatedAtDesc(Integer ocppTransactionId);
 
         @Query("SELECT cs FROM ChargingSession cs JOIN FETCH cs.charger ch JOIN FETCH ch.station st LEFT JOIN FETCH cs.connector WHERE cs.phoneNumber = :phoneNumber AND cs.status IN :statuses ORDER BY cs.createdAt DESC")

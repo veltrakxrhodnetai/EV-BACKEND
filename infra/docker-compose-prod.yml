@@ -10,7 +10,7 @@ services:
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U evuser -d evcsms"]
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER} -d ${DB_NAME}"]
       interval: 10s
       timeout: 5s
       retries: 5
@@ -48,6 +48,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${DB_NAME}
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      JAVA_TOOL_OPTIONS: "-XX:+UseContainerSupport -Xms256m -Xmx1024m -XX:+ExitOnOutOfMemoryError"
       SPRING_JPA_SHOW_SQL: "false"
       LOG_LEVEL: INFO
       SQL_LOG_LEVEL: WARN
@@ -74,6 +75,7 @@ services:
       SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${DB_NAME}
       SPRING_DATASOURCE_USERNAME: ${DB_USER}
       SPRING_DATASOURCE_PASSWORD: ${DB_PASSWORD}
+      JAVA_TOOL_OPTIONS: "-XX:+UseContainerSupport -Xms256m -Xmx1024m -XX:+ExitOnOutOfMemoryError"
       SPRING_JPA_SHOW_SQL: "false"
       LOG_LEVEL: INFO
       SQL_LOG_LEVEL: WARN

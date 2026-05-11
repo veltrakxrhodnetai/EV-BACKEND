@@ -1,0 +1,14 @@
+# Local environment secrets
+.env
+.env.*
+!.env.supabase.example
+!.env.supabase.vps.example
+
+# Build outputs
+/target/
+
+# Backend local runtime/build artifacts
+**/target/
+infra/.env
+infra/.env.*
+!infra/.env.example

@@ -14,5 +14,7 @@ public interface ChargerRepository extends JpaRepository<Charger, Long> {
 
     List<Charger> findByStation_Id(Long stationId);
 
+    boolean existsByStation_Id(Long stationId);
+
     Long countByCommunicationStatus(String communicationStatus);
 }
