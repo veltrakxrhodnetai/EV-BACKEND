@@ -1,0 +1,5 @@
+# Secret credentials - never commit
+.env
+
+# SSL certificates
+ssl/
