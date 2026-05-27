@@ -684,6 +684,38 @@ public class SessionController {
         return ResponseEntity.ok(response);
     }
 
+    @GetMapping("/customer/history")
+    public ResponseEntity<?> getCustomerSessionHistory(@RequestParam String phoneNumber) {
+        String normalizedPhone = phoneNumber == null ? "" : phoneNumber.trim();
+        if (normalizedPhone.isBlank()) {
+            return ResponseEntity.badRequest().body(Map.of("error", "phoneNumber is required"));
+        }
+
+        List<ChargingSession> sessions = chargingSessionRepository
+                .findHistoryByPhoneNumber(normalizedPhone, org.springframework.data.domain.PageRequest.of(0, 20));
+
+        List<Map<String, Object>> result = sessions.stream().map(session -> {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("sessionId", session.getId());
+            item.put("status", session.getStatus());
+            item.put("vehicleNumber", session.getVehicleNumber());
+            item.put("energyConsumedKwh", session.getEnergyConsumedKwh() == null ? 0.0 : session.getEnergyConsumedKwh());
+            item.put("totalAmount", session.getTotalAmount() == null ? 0.0 : session.getTotalAmount());
+            item.put("paymentMode", session.getPaymentMode());
+            item.put("paymentStatus", session.getPaymentStatus());
+            item.put("startedAt", session.getStartedAt());
+            item.put("endedAt", session.getEndedAt());
+            if (session.getCharger() != null && session.getCharger().getStation() != null) {
+                item.put("stationName", session.getCharger().getStation().getName());
+            } else {
+                item.put("stationName", "Unknown Station");
+            }
+            return item;
+        }).collect(java.util.stream.Collectors.toList());
+
+        return ResponseEntity.ok(result);
+    }
+
     @GetMapping("/monitor/live")
     public ResponseEntity<?> getLiveMonitor() {
         long activeChargingSessions = chargingSessionRepository.countByStatus("ACTIVE");

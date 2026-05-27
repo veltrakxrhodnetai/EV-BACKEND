@@ -1,15 +1,30 @@
 server:
   port: ${SERVER_PORT:8080}
+  shutdown: graceful
+  tomcat:
+    threads:
+      max: ${SERVER_TOMCAT_THREADS_MAX:200}
+      min-spare: ${SERVER_TOMCAT_THREADS_MIN_SPARE:20}
+    accept-count: ${SERVER_TOMCAT_ACCEPT_COUNT:100}
 
 spring:
+  lifecycle:
+    timeout-per-shutdown-phase: ${SPRING_LIFECYCLE_TIMEOUT_PER_SHUTDOWN_PHASE:30s}
   datasource:
     url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/evcsms}
     username: ${SPRING_DATASOURCE_USERNAME:evuser}
     password: ${SPRING_DATASOURCE_PASSWORD:evpass}
     driver-class-name: org.postgresql.Driver
+    hikari:
+      maximum-pool-size: ${SPRING_DATASOURCE_HIKARI_MAXIMUM_POOL_SIZE:20}
+      minimum-idle: ${SPRING_DATASOURCE_HIKARI_MINIMUM_IDLE:5}
+      connection-timeout: ${SPRING_DATASOURCE_HIKARI_CONNECTION_TIMEOUT:30000}
+      idle-timeout: ${SPRING_DATASOURCE_HIKARI_IDLE_TIMEOUT:600000}
+      max-lifetime: ${SPRING_DATASOURCE_HIKARI_MAX_LIFETIME:1800000}
   jpa:
     hibernate:
       ddl-auto: validate
+    open-in-view: false
     show-sql: ${SPRING_JPA_SHOW_SQL:false}
     properties:
       hibernate:
@@ -42,6 +57,8 @@ management:
   endpoint:
     health:
       show-details: when-authorized
+      probes:
+        enabled: true
 
 # Payment gateway configuration
 app:
@@ -57,7 +74,7 @@ app:
   payment:
     webhook:
       skip-signature-validation: ${APP_PAYMENT_WEBHOOK_SKIP_SIGNATURE:false}
-      mock-signature-validation: ${APP_PAYMENT_WEBHOOK_MOCK:true}
+      mock-signature-validation: ${APP_PAYMENT_WEBHOOK_MOCK:false}
   auth:
     otp:
       ttl-seconds: ${OTP_TTL_SECONDS:300}
@@ -65,7 +82,7 @@ app:
       sms-required: ${OTP_SMS_REQUIRED:true}
       msg91:
         enabled: ${MSG91_ENABLED:true}
-        auth-key: ${MSG91_AUTH_KEY:500086Axgw0hbj69e8a5a9P1}
+        auth-key: ${MSG91_AUTH_KEY:}
         template-id: ${MSG91_TEMPLATE_ID:69e8c993b6c8931b61090803}
         country-code: ${MSG91_COUNTRY_CODE:91}
         mode: ${MSG91_MODE:flow}
@@ -76,6 +93,6 @@ app:
 
 # Razorpay configuration
 razorpay:
-  key-id: ${RAZORPAY_KEY_ID:}
-  key-secret: ${RAZORPAY_KEY_SECRET:}
-  webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:}
+  key-id: ${RAZORPAY_KEY_ID:rzp_live_SuFisE6eqYQLkh}
+  key-secret: ${RAZORPAY_KEY_SECRET:ffTMoac0leS02t4vo8Si96YH}
+  webhook-secret: ${RAZORPAY_WEBHOOK_SECRET:Veltrak@2026}

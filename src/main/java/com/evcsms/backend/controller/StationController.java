@@ -139,8 +139,17 @@ public class StationController {
         stationRepository.findById(stationId)
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Station not found: " + stationId));
 
-        Tariff tariff = tariffRepository.findByStation_Id(stationId)
-                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Tariff not found for station: " + stationId));
+        Tariff tariff = tariffRepository.findByStation_Id(stationId).orElse(null);
+
+        if (tariff == null) {
+            return new TariffResponse(
+                    0.0,
+                    0.0,
+                    0.0,
+                    12.0,
+                    "INR"
+            );
+        }
 
         return new TariffResponse(
                 tariff.getPricePerKwh(),

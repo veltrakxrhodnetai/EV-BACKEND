@@ -50,6 +50,9 @@ public interface ChargingSessionRepository extends JpaRepository<ChargingSession
 
     List<ChargingSession> findTop20ByPhoneNumberOrderByCreatedAtDesc(String phoneNumber);
 
+    @Query("SELECT cs FROM ChargingSession cs LEFT JOIN FETCH cs.charger ch LEFT JOIN FETCH ch.station WHERE cs.phoneNumber = :phoneNumber ORDER BY cs.createdAt DESC")
+    List<ChargingSession> findHistoryByPhoneNumber(@Param("phoneNumber") String phoneNumber, org.springframework.data.domain.Pageable pageable);
+
     Long countByStatus(String status);
 
     Long countByStatusAndCreatedAtBetween(String status, LocalDateTime from, LocalDateTime to);
