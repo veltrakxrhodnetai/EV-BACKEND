@@ -83,6 +83,7 @@ public class StationController {
                         charger.getName(),
                         charger.getStatus(),
                         charger.getMaxPowerKw(),
+                        charger.getChargerType(),
                         connectorRepository.findByCharger_Id(charger.getId()).stream()
                                 .map(connector -> new ConnectorResponse(
                                         connector.getId(),
@@ -121,6 +122,7 @@ public class StationController {
                         charger.getName(),
                         charger.getStatus(),
                         charger.getMaxPowerKw(),
+                        charger.getChargerType(),
                         connectorRepository.findByCharger_Id(charger.getId()).stream()
                                 .map(connector -> new ConnectorResponse(
                                         connector.getId(),
@@ -195,6 +197,7 @@ public class StationController {
             String name,
             String status,
             Double maxPowerKw,
+            String chargerType,
             List<ConnectorResponse> connectors
     ) {
     }

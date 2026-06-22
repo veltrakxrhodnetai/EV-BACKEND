@@ -5,6 +5,7 @@ import com.evcsms.backend.ocpp.OcppWebSocketHandler;
 import com.evcsms.backend.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.evcsms.backend.service.AdminAuthService;
+import com.evcsms.backend.service.OwnerAuthService;
 import com.evcsms.backend.service.SettlementService;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
@@ -47,6 +48,7 @@ public class AdminPortalController {
     private final StationSettlementRepository stationSettlementRepository;
     private final SettlementService settlementService;
     private final OcppWebSocketHandler ocppWebSocketHandler;
+    private final OwnerAuthService ownerAuthService;
     private static final String CONNECTOR_STATUS_DELETED = "DELETED";
 
     public AdminPortalController(
@@ -66,7 +68,8 @@ public class AdminPortalController {
                 SettlementRepository settlementRepository,
                 StationSettlementRepository stationSettlementRepository,
                 SettlementService settlementService,
-                OcppWebSocketHandler ocppWebSocketHandler
+                OcppWebSocketHandler ocppWebSocketHandler,
+                OwnerAuthService ownerAuthService
     ) {
         this.adminAuthService = adminAuthService;
         this.stationRepository = stationRepository;
@@ -85,6 +88,7 @@ public class AdminPortalController {
         this.stationSettlementRepository = stationSettlementRepository;
         this.settlementService = settlementService;
         this.ocppWebSocketHandler = ocppWebSocketHandler;
+        this.ownerAuthService = ownerAuthService;
     }
 
     @GetMapping("/dashboard/summary")
@@ -908,6 +912,7 @@ public class AdminPortalController {
 
     @PostMapping("/tariffs")
     @ResponseStatus(HttpStatus.CREATED)
+    @Transactional
         public TariffResponse createTariff(
             @RequestHeader("Authorization") String authorization,
             @Valid @RequestBody TariffRequest request
@@ -941,6 +946,7 @@ public class AdminPortalController {
     }
 
     @PutMapping("/stations/{stationId}/tariff")
+    @Transactional
     public TariffResponse assignStationTariff(
             @RequestHeader("Authorization") String authorization,
             @PathVariable Long stationId,
@@ -1198,6 +1204,31 @@ public class AdminPortalController {
 
             audit(admin.username(), "UPDATE", "OWNER_ASSIGNMENTS", String.valueOf(ownerId), "{}");
             return getOwnerAssignments(authorization, ownerId);
+    }
+
+    @PutMapping("/owners/{ownerId}/reset-password")
+    public Map<String, String> resetOwnerPassword(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long ownerId,
+            @RequestBody ResetOwnerPasswordRequest request
+    ) {
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "ADMIN", "SUPER_ADMIN");
+        ownerAccountRepository.findById(ownerId)
+                .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Owner not found"));
+        ownerAuthService.resetOwnerPassword(ownerId, request.newPassword());
+        audit(admin.username(), "RESET_PASSWORD", "OWNER", String.valueOf(ownerId), "{}");
+        return Map.of("message", "Password reset successfully");
+    }
+
+    @PostMapping("/owners/{ownerId}/login-as")
+    public Map<String, String> loginAsOwner(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long ownerId
+    ) {
+        AdminAuthService.AuthenticatedAdmin admin = requireAdmin(authorization, "SUPER_ADMIN");
+        OwnerAuthService.OwnerAuthResult result = ownerAuthService.generateTokenForOwner(ownerId);
+        audit(admin.username(), "LOGIN_AS_OWNER", "OWNER", String.valueOf(ownerId), "{}");
+        return Map.of("token", result.token());
     }
 
     @GetMapping("/users")
@@ -1978,6 +2009,8 @@ public class AdminPortalController {
             String ownerMobileNumber
         ) {
         }
+
+    public record ResetOwnerPasswordRequest(@NotBlank String newPassword) {}
 
     public record OwnerCreateRequest(
             @NotBlank String name,

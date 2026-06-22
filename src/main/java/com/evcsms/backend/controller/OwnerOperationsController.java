@@ -11,6 +11,7 @@ import com.evcsms.backend.service.OwnerAuthService;
 import com.fasterxml.jackson.annotation.JsonInclude;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
+import jakarta.validation.constraints.NotNull;
 import org.springframework.http.HttpStatus;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.bind.annotation.CrossOrigin;
@@ -18,10 +19,12 @@ import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PatchMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
+import org.springframework.web.bind.annotation.ResponseStatus;
 import org.springframework.web.bind.annotation.RestController;
 import org.springframework.web.server.ResponseStatusException;
 
@@ -125,6 +128,10 @@ public class OwnerOperationsController {
                         charger.getStatus(),
                         charger.getEnabled(),
                         charger.getCommunicationStatus(),
+                        charger.getChargerType(),
+                        charger.getMaxPowerKw(),
+                        charger.getVendorName(),
+                        charger.getModel(),
                         connectors
                 ));
             }
@@ -259,6 +266,99 @@ public class OwnerOperationsController {
         );
     }
 
+    @PutMapping("/connectors/{connectorId}")
+    @Transactional
+    public OwnerConnectorResponse updateConnector(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long connectorId,
+            @Valid @RequestBody OwnerUpdateConnectorRequest request
+    ) {
+        OwnerAuthService.AuthenticatedOwner owner = requireOwner(authorization);
+        Connector connector = requireAccessibleConnector(owner, connectorId);
+
+        if (request.connectorType() != null && !request.connectorType().isBlank()) {
+            connector.setType(request.connectorType());
+        }
+        if (request.maxPowerKw() != null) {
+            connector.setMaxPowerKw(request.maxPowerKw());
+        }
+
+        connector = connectorRepository.save(connector);
+
+        return new OwnerConnectorResponse(
+                connector.getId(),
+                connector.getConnectorNo(),
+                connector.getType(),
+                connector.getMaxPowerKw(),
+                connector.getStatus()
+        );
+    }
+
+    @PutMapping("/chargers/{chargerId}")
+    @Transactional
+    public OwnerChargerResponse updateCharger(
+            @RequestHeader("Authorization") String authorization,
+            @PathVariable Long chargerId,
+            @Valid @RequestBody OwnerUpdateChargerRequest request
+    ) {
+        OwnerAuthService.AuthenticatedOwner owner = requireOwner(authorization);
+        Charger charger = requireAccessibleCharger(owner, chargerId);
+
+        if (request.name() != null && !request.name().isBlank()) {
+            charger.setName(request.name());
+        }
+        if (request.vendorName() != null) {
+            charger.setVendorName(request.vendorName());
+        }
+        if (request.model() != null) {
+            charger.setModel(request.model());
+        }
+        if (request.serialNumber() != null) {
+            charger.setSerialNumber(request.serialNumber());
+        }
+        if (request.chargerType() != null && !request.chargerType().isBlank()) {
+            charger.setChargerType(request.chargerType());
+        }
+        if (request.maxPowerKw() != null) {
+            charger.setMaxPowerKw(request.maxPowerKw());
+        }
+
+        charger = chargerRepository.save(charger);
+        return toOwnerChargerResponse(charger);
+    }
+
+    @PostMapping("/connectors")
+    @ResponseStatus(HttpStatus.CREATED)
+    @Transactional
+    public OwnerConnectorResponse addConnector(
+            @RequestHeader("Authorization") String authorization,
+            @Valid @RequestBody OwnerAddConnectorRequest request
+    ) {
+        OwnerAuthService.AuthenticatedOwner owner = requireOwner(authorization);
+        Charger charger = requireAccessibleCharger(owner, request.chargerId());
+
+        if (connectorRepository.findByCharger_IdAndConnectorNo(request.chargerId(), request.connectorNo()).isPresent()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "Connector number already exists for this charger");
+        }
+
+        Connector connector = new Connector();
+        connector.setCharger(charger);
+        connector.setConnectorNo(request.connectorNo());
+        connector.setType(request.connectorType());
+        connector.setMaxPowerKw(request.maxPowerKw());
+        connector.setStatus("UNAVAILABLE");
+
+        connector = connectorRepository.save(connector);
+
+        return new OwnerConnectorResponse(
+                connector.getId(),
+                connector.getConnectorNo(),
+                connector.getType(),
+                connector.getMaxPowerKw(),
+                connector.getStatus()
+        );
+    }
+
     private OwnerAuthService.AuthenticatedOwner requireOwner(String authorizationHeader) {
         try {
             return ownerAuthService.requireOwnerFromAuthorizationHeader(authorizationHeader);
@@ -342,12 +442,37 @@ public class OwnerOperationsController {
                 charger.getStatus(),
                 charger.getEnabled(),
                 charger.getCommunicationStatus(),
+                charger.getChargerType(),
+                charger.getMaxPowerKw(),
+                charger.getVendorName(),
+                charger.getModel(),
                 connectors
         );
     }
 
     public record OwnerChargerResetRequest(@NotBlank String type) {
     }
+
+    public record OwnerUpdateConnectorRequest(
+            String connectorType,
+            Double maxPowerKw
+    ) {}
+
+    public record OwnerUpdateChargerRequest(
+            String name,
+            String vendorName,
+            String model,
+            String serialNumber,
+            String chargerType,
+            Double maxPowerKw
+    ) {}
+
+    public record OwnerAddConnectorRequest(
+            @NotNull Long chargerId,
+            @NotNull Integer connectorNo,
+            @NotBlank String connectorType,
+            @NotNull Double maxPowerKw
+    ) {}
 
     @JsonInclude(JsonInclude.Include.NON_NULL)
     public record OwnerCommandResponse(String action, String status, String payload) {
@@ -370,6 +495,10 @@ public class OwnerOperationsController {
             String status,
             Boolean enabled,
             String communicationStatus,
+            String chargerType,
+            Double maxPowerKw,
+            String vendorName,
+            String model,
             List<OwnerConnectorResponse> connectors
     ) {
     }

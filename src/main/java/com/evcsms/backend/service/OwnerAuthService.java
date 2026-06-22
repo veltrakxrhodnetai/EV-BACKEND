@@ -89,6 +89,35 @@ public class OwnerAuthService {
     }
 
     /**
+     * Generate a JWT token for an owner by ID — used by admin login-as feature
+     */
+    public OwnerAuthResult generateTokenForOwner(Long ownerId) {
+        OwnerAccount owner = ownerAccountRepository.findById(ownerId)
+                .orElseThrow(() -> new IllegalArgumentException("Owner not found"));
+
+        List<OwnerStationAssignment> assignments = ownerStationAssignmentRepository.findByOwnerId(owner.getId());
+        if (assignments.isEmpty()) {
+            throw new IllegalArgumentException("No stations assigned to owner");
+        }
+
+        String token = generateJwt(owner.getId(), owner.getMobileNumber(), owner.getName(), assignments, OWNER_JWT_TTL_SECONDS);
+        logger.info("Admin generated owner token for owner: {} (id={})", owner.getName(), ownerId);
+
+        return new OwnerAuthResult(token, "Bearer", OWNER_JWT_TTL_SECONDS, owner.getId(), owner.getName(), assignments);
+    }
+
+    /**
+     * Reset an owner's PIN/password hash
+     */
+    public void resetOwnerPassword(Long ownerId, String newPassword) {
+        OwnerAccount owner = ownerAccountRepository.findById(ownerId)
+                .orElseThrow(() -> new IllegalArgumentException("Owner not found"));
+        owner.setPinOrPasswordHash(sha256(newPassword));
+        ownerAccountRepository.save(owner);
+        logger.info("Admin reset password for owner id={}", ownerId);
+    }
+
+    /**
      * Verify if an owner has access to a specific station
      */
     public boolean hasAccessToStation(Long ownerId, Long stationId) {
