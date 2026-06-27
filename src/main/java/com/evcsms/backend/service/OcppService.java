@@ -12,9 +12,12 @@ public class OcppService {
     private static final String DEFAULT_ID_TAG = "UNKNOWN";
 
     private final ChargingSessionService chargingSessionService;
+    private final ChargerUptimeService chargerUptimeService;
 
-    public OcppService(ChargingSessionService chargingSessionService) {
+    public OcppService(ChargingSessionService chargingSessionService,
+                       ChargerUptimeService chargerUptimeService) {
         this.chargingSessionService = chargingSessionService;
+        this.chargerUptimeService = chargerUptimeService;
     }
 
     /**
@@ -47,7 +50,17 @@ public class OcppService {
     public void handleBootNotification(String chargerId, JsonNode payload) {
         logger.info("Handling BootNotification for chargerId={}", chargerId);
         chargingSessionService.registerChargerBoot(chargerId, payload);
-        // DB update happens here: persist charger metadata, firmware, and last-seen timestamp.
+        chargerUptimeService.recordStatusChange(chargerId, "ONLINE");
+    }
+
+    public void handleStatusNotification(String chargerId, JsonNode payload) {
+        String status = payload.path("status").asText("");
+        logger.debug("Handling StatusNotification for chargerId={}, status={}", chargerId, status);
+        if ("Faulted".equalsIgnoreCase(status)) {
+            chargerUptimeService.recordStatusChange(chargerId, "FAULTED");
+        } else if (!status.isBlank()) {
+            chargerUptimeService.recordStatusChange(chargerId, "ONLINE");
+        }
     }
 
     /**

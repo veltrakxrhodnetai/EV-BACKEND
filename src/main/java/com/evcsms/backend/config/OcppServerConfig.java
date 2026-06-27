@@ -24,6 +24,7 @@ public class OcppServerConfig {
         wrapper.registerActionHandler("StartTransaction", ocppService::handleStartTransaction);
         wrapper.registerActionHandler("StopTransaction", ocppService::handleStopTransaction);
         wrapper.registerActionHandler("MeterValues", ocppService::handleMeterValues);
+        wrapper.registerActionHandler("StatusNotification", ocppService::handleStatusNotification);
 
         // Mapping note: keep sessionId -> charger serial mapping in the wrapper so reconnects/messages
         // can be correlated even when individual OCPP payloads omit serial fields.

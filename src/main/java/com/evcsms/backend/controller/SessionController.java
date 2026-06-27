@@ -307,9 +307,12 @@ public class SessionController {
         return ResponseEntity.ok(Map.of("message", "Session cancelled", "sessionId", id));
     }
 
+    public record PayAndStartRequest(String razorpayPaymentId) {}
+
     @PostMapping("/{id}/pay-and-start")
-    public ResponseEntity<?> payAndStart(@PathVariable Long id) {        try {
-            chargingSessionService.acceptPaymentAndStartCharging(id);
+    public ResponseEntity<?> payAndStart(@PathVariable Long id, @RequestBody(required = false) PayAndStartRequest request) {        try {
+            String razorpayPaymentId = request == null ? null : request.razorpayPaymentId();
+            chargingSessionService.acceptPaymentAndStartCharging(id, razorpayPaymentId);
             ChargingSession session = chargingSessionRepository.findById(id)
                     .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Session not found: " + id));
 

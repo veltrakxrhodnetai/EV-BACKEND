@@ -6,14 +6,20 @@ import com.evcsms.backend.util.IdUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.MediaType;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.client.HttpClientErrorException;
+import org.springframework.web.client.RestClient;
 
 import javax.crypto.Mac;
 import javax.crypto.spec.SecretKeySpec;
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
+import java.util.Base64;
+import java.util.Map;
 import java.util.Optional;
 
 @Service
@@ -22,20 +28,60 @@ public class PaymentService {
     private static final Logger logger = LoggerFactory.getLogger(PaymentService.class);
     private static final String CURRENCY = "INR";
     private static final long TEMP_HOLD_EXPIRY_SECONDS = 900;
+    private static final String RAZORPAY_PAYMENT_ID_PREFIX = "pay_";
 
     private final PaymentRepository paymentRepository;
     private final boolean skipWebhookSignatureValidation;
     private final boolean mockWebhookSignatureValidation;
     private final String razorpayWebhookSecret;
+    private final RestClient razorpayRestClient;
 
     public PaymentService(PaymentRepository paymentRepository,
                           @Value("${app.payment.webhook.skip-signature-validation:false}") boolean skipWebhookSignatureValidation,
                           @Value("${app.payment.webhook.mock-signature-validation:true}") boolean mockWebhookSignatureValidation,
-                          @Value("${razorpay.webhook-secret:}") String razorpayWebhookSecret) {
+                          @Value("${razorpay.webhook-secret:}") String razorpayWebhookSecret,
+                          @Value("${razorpay.key-id:}") String razorpayKeyId,
+                          @Value("${razorpay.key-secret:}") String razorpayKeySecret) {
         this.paymentRepository = paymentRepository;
         this.skipWebhookSignatureValidation = skipWebhookSignatureValidation;
         this.mockWebhookSignatureValidation = mockWebhookSignatureValidation;
         this.razorpayWebhookSecret = razorpayWebhookSecret;
+        this.razorpayRestClient = RestClient.builder()
+                .baseUrl("https://api.razorpay.com/v1")
+                .requestInterceptor((request, body, execution) -> {
+                    if (razorpayKeyId != null && !razorpayKeyId.isBlank()
+                            && razorpayKeySecret != null && !razorpayKeySecret.isBlank()) {
+                        String credentials = razorpayKeyId + ":" + razorpayKeySecret;
+                        String encoded = Base64.getEncoder().encodeToString(credentials.getBytes(StandardCharsets.UTF_8));
+                        request.getHeaders().set("Authorization", "Basic " + encoded);
+                    }
+                    return execution.execute(request, body);
+                })
+                .build();
+    }
+
+    /**
+     * Records the real Razorpay payment id captured by the frontend Checkout widget
+     * as the session's pre-auth reference, so later capture/refund calls operate on
+     * the actual gateway transaction instead of an internal placeholder.
+     */
+    @Transactional
+    public void recordRealPaymentId(Long sessionId, String razorpayPaymentId, BigDecimal amount) {
+        Instant now = Instant.now();
+        PaymentRecord record = PaymentRecord.builder()
+                .sessionId(sessionId)
+                .preAuthId(razorpayPaymentId)
+                .amount(amount)
+                .currency(CURRENCY)
+                .operation("PREAUTH")
+                .status("SUCCESS")
+                .providerReference(razorpayPaymentId)
+                .providerPayload("{\"source\":\"razorpay-checkout\",\"razorpay_payment_id\":\"" + razorpayPaymentId + "\"}")
+                .createdAt(now)
+                .updatedAt(now)
+                .build();
+        paymentRepository.save(record);
+        logger.info("Recorded real Razorpay payment id={} for sessionId={}", razorpayPaymentId, sessionId);
     }
 
     @Transactional
@@ -66,7 +112,9 @@ public class PaymentService {
         PaymentRecord preAuthRecord = paymentRepository.findTopByPreAuthIdAndOperationOrderByCreatedAtDesc(preAuthId, "PREAUTH")
                 .orElseThrow(() -> new IllegalArgumentException("Pre-auth record not found: " + preAuthId));
 
-        MockGatewayResponse gatewayResponse = mockGatewayCall("capture", preAuthId, amount);
+        MockGatewayResponse gatewayResponse = isRealRazorpayPaymentId(preAuthId)
+                ? callRazorpayCapture(preAuthId, amount)
+                : mockGatewayCall("capture", preAuthId, amount);
         Instant now = Instant.now();
 
         PaymentRecord paymentRecord = PaymentRecord.builder()
@@ -91,7 +139,11 @@ public class PaymentService {
         PaymentRecord preAuthRecord = paymentRepository.findTopByPreAuthIdAndOperationOrderByCreatedAtDesc(preAuthId, "PREAUTH")
                 .orElseThrow(() -> new IllegalArgumentException("Pre-auth record not found: " + preAuthId));
 
-        MockGatewayResponse gatewayResponse = mockGatewayCall("release", preAuthId, amount);
+        // Razorpay auto-captures on Checkout success (no manual-capture hold exists here),
+        // so "releasing" a real payment id means refunding the full amount back to the customer.
+        MockGatewayResponse gatewayResponse = isRealRazorpayPaymentId(preAuthId)
+                ? callRazorpayRefund(preAuthId, amount)
+                : mockGatewayCall("release", preAuthId, amount);
         Instant now = Instant.now();
 
         PaymentRecord paymentRecord = PaymentRecord.builder()
@@ -116,7 +168,9 @@ public class PaymentService {
         PaymentRecord preAuthRecord = paymentRepository.findTopByPreAuthIdAndOperationOrderByCreatedAtDesc(preAuthId, "PREAUTH")
             .orElseThrow(() -> new IllegalArgumentException("Pre-auth record not found: " + preAuthId));
 
-        MockGatewayResponse gatewayResponse = mockGatewayCall("refund", preAuthId, amount);
+        MockGatewayResponse gatewayResponse = isRealRazorpayPaymentId(preAuthId)
+                ? callRazorpayRefund(preAuthId, amount)
+                : mockGatewayCall("refund", preAuthId, amount);
         Instant now = Instant.now();
 
         PaymentRecord paymentRecord = PaymentRecord.builder()
@@ -181,6 +235,65 @@ public class PaymentService {
     public Optional<String> findLatestPreAuthIdBySessionId(Long sessionId) {
         return paymentRepository.findTopBySessionIdAndOperationOrderByCreatedAtDesc(sessionId, "PREAUTH")
                 .map(PaymentRecord::getPreAuthId);
+    }
+
+    private static boolean isRealRazorpayPaymentId(String preAuthId) {
+        return preAuthId != null && preAuthId.startsWith(RAZORPAY_PAYMENT_ID_PREFIX);
+    }
+
+    private static long toPaise(BigDecimal amount) {
+        return amount.movePointRight(2).setScale(0, RoundingMode.HALF_UP).longValueExact();
+    }
+
+    /**
+     * Calls Razorpay's real Capture API. Most payment methods used here (UPI, and cards
+     * created without payment_capture=0) are auto-captured by Razorpay the moment the
+     * customer completes Checkout, so "already captured" is treated as a successful no-op
+     * rather than a failure - the actual settlement of unused funds happens via refund().
+     */
+    private MockGatewayResponse callRazorpayCapture(String paymentId, BigDecimal amount) {
+        try {
+            Map<?, ?> response = razorpayRestClient.post()
+                    .uri("/payments/{id}/capture", paymentId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("amount", toPaise(amount), "currency", CURRENCY))
+                    .retrieve()
+                    .body(Map.class);
+            logger.info("Razorpay capture succeeded for paymentId={}, amount={}", paymentId, amount);
+            return new MockGatewayResponse(true, paymentId, String.valueOf(response));
+        } catch (HttpClientErrorException ex) {
+            String body = ex.getResponseBodyAsString();
+            if (body != null && body.toLowerCase().contains("already been captured")) {
+                logger.info("Razorpay payment {} already auto-captured; treating capture as success", paymentId);
+                return new MockGatewayResponse(true, paymentId, body);
+            }
+            logger.error("Razorpay capture failed for paymentId={}: {}", paymentId, body);
+            return new MockGatewayResponse(false, paymentId, body);
+        } catch (Exception ex) {
+            logger.error("Razorpay capture error for paymentId={}", paymentId, ex);
+            return new MockGatewayResponse(false, paymentId, ex.getMessage());
+        }
+    }
+
+    /** Calls Razorpay's real Refund API to actually return unused/held funds to the customer. */
+    private MockGatewayResponse callRazorpayRefund(String paymentId, BigDecimal amount) {
+        try {
+            Map<?, ?> response = razorpayRestClient.post()
+                    .uri("/payments/{id}/refund", paymentId)
+                    .contentType(MediaType.APPLICATION_JSON)
+                    .body(Map.of("amount", toPaise(amount)))
+                    .retrieve()
+                    .body(Map.class);
+            String refundId = response != null && response.get("id") != null ? response.get("id").toString() : paymentId;
+            logger.info("Razorpay refund succeeded for paymentId={}, amount={}, refundId={}", paymentId, amount, refundId);
+            return new MockGatewayResponse(true, refundId, String.valueOf(response));
+        } catch (HttpClientErrorException ex) {
+            logger.error("Razorpay refund failed for paymentId={}: {}", paymentId, ex.getResponseBodyAsString());
+            return new MockGatewayResponse(false, paymentId, ex.getResponseBodyAsString());
+        } catch (Exception ex) {
+            logger.error("Razorpay refund error for paymentId={}", paymentId, ex);
+            return new MockGatewayResponse(false, paymentId, ex.getMessage());
+        }
     }
 
     private MockGatewayResponse mockGatewayCall(String operation, String preAuthId, BigDecimal amount) {

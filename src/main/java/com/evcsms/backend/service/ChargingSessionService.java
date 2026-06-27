@@ -576,6 +576,10 @@ public class ChargingSessionService {
      * Accept payment and only then trigger OCPP RemoteStartTransaction.
      */
     public void acceptPaymentAndStartCharging(long sessionId) {
+        acceptPaymentAndStartCharging(sessionId, null);
+    }
+
+    public void acceptPaymentAndStartCharging(long sessionId, String razorpayPaymentId) {
         ChargingSession session = chargingSessionRepository.findById(sessionId)
                 .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId));
 
@@ -621,7 +625,15 @@ public class ChargingSessionService {
 
         Double preauthAmount = session.getPreauthAmount() == null ? 0.0 : session.getPreauthAmount();
         boolean ownerDeferredPayment = "OWNER".equalsIgnoreCase(session.getStartedBy());
-        if (ownerDeferredPayment) {
+        if (razorpayPaymentId != null && !razorpayPaymentId.isBlank()) {
+            // Customer already completed real payment via the Razorpay Checkout widget.
+            // Record the real gateway payment id so later capture/refund calls hit the
+            // actual transaction instead of an internal placeholder.
+            paymentService.recordRealPaymentId(session.getId(), razorpayPaymentId, BigDecimal.valueOf(preauthAmount));
+            session.setPreauthId(razorpayPaymentId);
+            session.setPaymentStatus("PREAUTH_SUCCESS");
+            logger.info("Session {} linked to real Razorpay payment {}", sessionId, razorpayPaymentId);
+        } else if (ownerDeferredPayment) {
             // Owner mode: start charging now, collect payment after session completion.
             session.setPaymentStatus("PAYMENT_PENDING");
             logger.info("Session {} started by owner; skipping pre-authorization", sessionId);
