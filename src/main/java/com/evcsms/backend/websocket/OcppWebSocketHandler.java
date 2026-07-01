@@ -13,6 +13,7 @@ import org.springframework.web.socket.WebSocketSession;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
+import java.net.URI;
 
 @Component
 public class OcppWebSocketHandler extends TextWebSocketHandler {
@@ -33,6 +34,17 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     @Override
     public void afterConnectionEstablished(WebSocketSession session) {
         session.getAttributes().put(ATTR_SESSION_ID, session.getId());
+        URI uri = session.getUri();
+        if (uri != null) {
+            String path = uri.getPath();
+            String[] segments = path.split("/");
+            if (segments.length > 0) {
+                String identity = segments[segments.length - 1];
+                if (identity != null && !identity.isBlank()) {
+                    session.getAttributes().put(ATTR_CHARGER_SERIAL, identity);
+                }
+            }
+        }
         logger.info("OCPP connection established: sessionId={}", session.getId());
     }
 
