@@ -71,6 +71,8 @@ app:
       heartbeat-miss-multiplier: ${APP_OCPP_HEARTBEAT_MISS_MULTIPLIER:3}
       watchdog-interval-millis: ${APP_OCPP_WATCHDOG_INTERVAL_MILLIS:15000}
       stale-charging-mitigation-cooldown-seconds: ${APP_OCPP_STALE_CHARGING_MITIGATION_COOLDOWN_SECONDS:15}
+    ping:
+      interval-millis: ${APP_OCPP_PING_INTERVAL_MILLIS:25000}
   payment:
     webhook:
       skip-signature-validation: ${APP_PAYMENT_WEBHOOK_SKIP_SIGNATURE:false}

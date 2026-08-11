@@ -21,10 +21,14 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 import org.springframework.web.socket.CloseStatus;
+import org.springframework.web.socket.PingMessage;
+import org.springframework.web.socket.PongMessage;
 import org.springframework.web.socket.TextMessage;
 import org.springframework.web.socket.WebSocketSession;
+import org.springframework.web.socket.handler.ConcurrentWebSocketSessionDecorator;
 import org.springframework.web.socket.handler.TextWebSocketHandler;
 
 import java.io.IOException;
@@ -45,6 +49,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import java.util.UUID;
+import java.util.function.Consumer;
 import java.util.stream.Collectors;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentLinkedDeque;
@@ -59,6 +64,12 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     private static final Logger logger = LoggerFactory.getLogger(OcppWebSocketHandler.class);
     private static final double GST_PERCENT = 18.0;
     private static final double DEFAULT_PLATFORM_FEE_PERCENT = 12.0;
+    // ConcurrentWebSocketSessionDecorator serializes writes to the same underlying WebSocketSession.
+    // Multiple threads can write concurrently: inbound CallResult replies (WS container thread),
+    // admin-triggered commands (HTTP thread via sendCommandAndAwait), and the keepalive ping
+    // scheduler thread. Raw Spring WebSocketSession is not safe for concurrent sendMessage() calls.
+    private static final int SEND_TIME_LIMIT_MS = 10_000;
+    private static final int SEND_BUFFER_SIZE_LIMIT_BYTES = 512 * 1024;
 
     private final ObjectMapper objectMapper;
     private final ChargerRepository chargerRepository;
@@ -70,7 +81,10 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     private final OcppMessageLogRepository ocppMessageLogRepository;
     private final Msg91OtpService msg91OtpService;
     private final PaymentService paymentService;
-    private final ConcurrentHashMap<String, WebSocketSession> activeSessions = new ConcurrentHashMap<>();
+    private final ConcurrentHashMap<String, ConcurrentWebSocketSessionDecorator> activeSessions = new ConcurrentHashMap<>();
+    // Keyed by the raw underlying WebSocket session id so overlapping/superseded sessions for the
+    // same chargerId each keep their own diagnostics until they individually close.
+    private final ConcurrentHashMap<String, ConnectionDiagnostics> connectionDiagnostics = new ConcurrentHashMap<>();
     private final ConcurrentHashMap<String, CompletableFuture<JsonNode>> pendingResponses = new ConcurrentHashMap<>();
     // transactionId -> latest SoC (0-100)
     private final ConcurrentHashMap<Integer, Double> latestSocByTransaction = new ConcurrentHashMap<>();
@@ -145,19 +159,41 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             }
         }
 
-        activeSessions.put(chargerId, session);
-        chargerRepository.findByOcppIdentity(chargerId).ifPresent(charger -> {
+        ConcurrentWebSocketSessionDecorator decoratedSession =
+                new ConcurrentWebSocketSessionDecorator(session, SEND_TIME_LIMIT_MS, SEND_BUFFER_SIZE_LIMIT_BYTES);
+
+        connectionDiagnostics.put(session.getId(), new ConnectionDiagnostics(
+                chargerId, session.getId(), String.valueOf(session.getRemoteAddress()), Instant.now()));
+
+        // Atomically register the new session. If an older session for the same chargerId is still
+        // registered (charger reconnected before the old socket was noticed as dead), close it so it
+        // cannot linger as a zombie entry, and so its eventual afterConnectionClosed callback does not
+        // race with this new registration.
+        ConcurrentWebSocketSessionDecorator previous = activeSessions.put(chargerId, decoratedSession);
+        if (previous != null && previous.isOpen() && !previous.getId().equals(session.getId())) {
+            logger.warn("OCPP charger {} opened new sessionId={} while previous sessionId={} was still registered; closing previous session",
+                    chargerId, session.getId(), previous.getId());
+            try {
+                previous.close(CloseStatus.POLICY_VIOLATION.withReason("Replaced by newer connection for same chargerId"));
+            } catch (IOException ex) {
+                logger.debug("Failed to close superseded sessionId={} for charger {}: {}",
+                        previous.getId(), chargerId, ex.getMessage());
+            }
+        }
+
+        resolveCharger(chargerId).ifPresent(charger -> {
             charger.setCommunicationStatus("ONLINE");
             charger.setLastHeartbeat(LocalDateTime.now());
             chargerRepository.save(charger);
         });
-        logger.info("OCPP connection established for chargerId={}, remote={}, uri={}, protocol={}",
+        logger.info("OCPP connection established for chargerId={}, sessionId={}, remote={}, uri={}, protocol={}",
             chargerId,
+            session.getId(),
             session.getRemoteAddress(),
             session.getUri(),
             session.getAcceptedProtocol());
         recordConnectorEvent("CONNECTION_OPEN", chargerId, null, "CONNECTED", null, null,
-                "WebSocket connection established");
+                "WebSocket connection established, sessionId=" + session.getId());
     }
 
     /**
@@ -222,6 +258,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
 
         int messageType = root.path(0).asInt(-1);
         String chargerId = extractChargerId(session);
+        touchDiagnostics(session.getId(), diag -> diag.lastMessageReceivedAt = Instant.now());
 
         logInboundMessage(chargerId, messageType, root);
 
@@ -243,16 +280,22 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         String action = root.path(2).asText("");
         JsonNode payload = root.path(3);
 
+        // Route responses through the registered (concurrency-safe) session decorator rather than
+        // the raw session, so replies here can't interleave unsafely with admin commands or pings
+        // sent concurrently on other threads for the same charger.
+        ConcurrentWebSocketSessionDecorator registeredSession = activeSessions.get(chargerId);
+        WebSocketSession outboundSession = registeredSession != null ? registeredSession : session;
+
         try {
             switch (action) {
-                case "BootNotification" -> handleBootNotification(session, msgId, chargerId);
-                case "Heartbeat" -> handleHeartbeat(session, msgId, chargerId);
-                case "StatusNotification" -> handleStatusNotification(session, msgId, chargerId, payload);
-                case "Authorize" -> sendCallResult(session, msgId, Map.of("idTagInfo", Map.of("status", "Accepted")));
-                case "StartTransaction" -> handleStartTransaction(session, msgId, chargerId, payload);
-                case "MeterValues" -> handleMeterValues(session, msgId, payload);
-                case "StopTransaction" -> handleStopTransaction(session, msgId, payload);
-                default -> sendCallResult(session, msgId, Map.of());
+                case "BootNotification" -> handleBootNotification(outboundSession, msgId, chargerId);
+                case "Heartbeat" -> handleHeartbeat(outboundSession, msgId, chargerId);
+                case "StatusNotification" -> handleStatusNotification(outboundSession, msgId, chargerId, payload);
+                case "Authorize" -> sendCallResult(outboundSession, msgId, Map.of("idTagInfo", Map.of("status", "Accepted")));
+                case "StartTransaction" -> handleStartTransaction(outboundSession, msgId, chargerId, payload);
+                case "MeterValues" -> handleMeterValues(outboundSession, msgId, payload);
+                case "StopTransaction" -> handleStopTransaction(outboundSession, msgId, payload);
+                default -> sendCallResult(outboundSession, msgId, Map.of());
             }
         } catch (Exception ex) {
             // Never let an exception propagate out of this handler — doing so causes Spring
@@ -263,7 +306,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
                 // Send a CallError back so the charger knows something went wrong.
                 String callError = objectMapper.writeValueAsString(
                     new Object[]{4, msgId, "InternalError", ex.getMessage(), Map.of()});
-                session.sendMessage(new TextMessage(callError));
+                outboundSession.sendMessage(new TextMessage(callError));
             } catch (Exception sendEx) {
                 logger.warn("[OCPP-ERROR] Could not send CallError to charger={}: {}", chargerId, sendEx.getMessage());
             }
@@ -271,20 +314,143 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     }
 
     @Override
+    protected void handlePongMessage(WebSocketSession session, PongMessage message) {
+        touchDiagnostics(session.getId(), diag -> diag.lastPongReceivedAt = Instant.now());
+        logger.debug("OCPP WebSocket pong received sessionId={}", session.getId());
+    }
+
+    /**
+     * Sends a WebSocket-level Ping frame to every currently-registered charger session. This is
+     * independent of the OCPP Heartbeat action: it keeps the underlying TCP/WS connection itself
+     * alive and lets us detect a dead peer (via a failed send) far sooner than waiting on an
+     * infrastructure idle timeout.
+     */
+    @Scheduled(fixedDelayString = "${app.ocpp.ping.interval-millis:25000}")
+    public void sendKeepAlivePings() {
+        for (Map.Entry<String, ConcurrentWebSocketSessionDecorator> entry : activeSessions.entrySet()) {
+            String chargerId = entry.getKey();
+            ConcurrentWebSocketSessionDecorator session = entry.getValue();
+            if (!session.isOpen()) {
+                continue;
+            }
+            try {
+                session.sendMessage(new PingMessage());
+                touchDiagnostics(session.getId(), diag -> diag.lastPingSentAt = Instant.now());
+            } catch (Exception ex) {
+                logger.debug("Failed to send WebSocket ping to charger={} sessionId={}: {}",
+                        chargerId, session.getId(), ex.getMessage());
+            }
+        }
+    }
+
+    @Override
     public void afterConnectionClosed(WebSocketSession session, CloseStatus status) {
         String chargerId = extractChargerId(session);
-        activeSessions.remove(chargerId);
-        chargerRepository.findByOcppIdentity(chargerId).ifPresent(charger -> {
+
+        // Only remove the map entry if it still points at THIS session. If a newer session for the
+        // same chargerId has already replaced it, this stale close must not unregister the new one.
+        activeSessions.computeIfPresent(chargerId, (id, current) ->
+                current.getId().equals(session.getId()) ? null : current);
+
+        resolveCharger(chargerId).ifPresent(charger -> {
             charger.setCommunicationStatus("OFFLINE");
             chargerRepository.save(charger);
         });
-        logger.info("OCPP connection closed for chargerId={}, status={}, uri={}, protocol={}",
+
+        logConnectionDiagnosticsOnClose(chargerId, session, status);
+
+        logger.info("OCPP connection closed for chargerId={}, sessionId={}, status={}, uri={}, protocol={}",
             chargerId,
+            session.getId(),
             status,
             session.getUri(),
             session.getAcceptedProtocol());
         recordConnectorEvent("CONNECTION_CLOSED", chargerId, null, "DISCONNECTED", null, null,
-                "WebSocket connection closed: " + status);
+                "WebSocket connection closed: " + status + ", sessionId=" + session.getId());
+    }
+
+    /**
+     * Logs a single structured OCPP_DISCONNECT line carrying enough timing detail to tell whether
+     * the connection was actually idle (no traffic, no ping response, no heartbeat) before it died,
+     * versus being closed shortly after activity. Intended to be grep-able in production logs.
+     */
+    private void logConnectionDiagnosticsOnClose(String chargerId, WebSocketSession session, CloseStatus status) {
+        ConnectionDiagnostics diag = connectionDiagnostics.remove(session.getId());
+        Instant now = Instant.now();
+
+        Long connectedForSeconds = diag == null ? null : Duration.between(diag.connectedAt, now).getSeconds();
+        Long lastMessageAgoSeconds = secondsAgo(diag == null ? null : diag.lastMessageReceivedAt, now);
+        Long lastMessageSentAgoSeconds = secondsAgo(diag == null ? null : diag.lastMessageSentAt, now);
+        Long lastHeartbeatAgoSeconds = secondsAgo(diag == null ? null : diag.lastHeartbeatAt, now);
+        Long lastPingAgoSeconds = secondsAgo(diag == null ? null : diag.lastPingSentAt, now);
+        Long lastPongAgoSeconds = secondsAgo(diag == null ? null : diag.lastPongReceivedAt, now);
+        String remoteAddress = diag == null ? String.valueOf(session.getRemoteAddress()) : diag.remoteAddress;
+
+        logger.info(
+            "OCPP_DISCONNECT chargerId={} sessionId={} remoteAddress={} connectedForSeconds={} "
+          + "lastMessageAgoSeconds={} lastMessageSentAgoSeconds={} lastHeartbeatAgoSeconds={} "
+          + "lastPingAgoSeconds={} lastPongAgoSeconds={} closeCode={} closeReason={}",
+            chargerId, session.getId(), remoteAddress, connectedForSeconds,
+            lastMessageAgoSeconds, lastMessageSentAgoSeconds, lastHeartbeatAgoSeconds,
+            lastPingAgoSeconds, lastPongAgoSeconds, status.getCode(), status.getReason());
+    }
+
+    private static Long secondsAgo(Instant instant, Instant now) {
+        return instant == null ? null : Duration.between(instant, now).getSeconds();
+    }
+
+    /**
+     * Resolves a charger by its OCPP identity, tolerating case and leading/trailing whitespace
+     * differences between the identity presented on the WebSocket URL and the value stored in the
+     * database (e.g. an operator typo during provisioning). Falls back to a normalized match and
+     * logs a warning so the underlying data mismatch gets fixed instead of silently masked forever.
+     */
+    private Optional<Charger> resolveCharger(String chargerId) {
+        if (chargerId == null) {
+            return Optional.empty();
+        }
+        Optional<Charger> exact = chargerRepository.findByOcppIdentity(chargerId);
+        if (exact.isPresent()) {
+            return exact;
+        }
+        Optional<Charger> normalized = chargerRepository.findByOcppIdentityNormalized(chargerId.trim());
+        normalized.ifPresent(charger -> logger.warn(
+                "Charger identity mismatch: incoming chargerId='{}' did not match any charger by exact identity, "
+              + "but matched charger id={} via case/whitespace-insensitive fallback (stored ocppIdentity='{}'). "
+              + "Fix the stored ocpp_identity value to remove reliance on this fallback.",
+                chargerId, charger.getId(), charger.getOcppIdentity()));
+        return normalized;
+    }
+
+    private void touchDiagnostics(String sessionId, Consumer<ConnectionDiagnostics> mutator) {
+        ConnectionDiagnostics diag = connectionDiagnostics.get(sessionId);
+        if (diag != null) {
+            mutator.accept(diag);
+        }
+    }
+
+    /**
+     * Per-connection timing metadata used only for OCPP_DISCONNECT diagnostics. Keyed by the raw
+     * underlying WebSocket session id (see connectionDiagnostics), so it stays correct even while
+     * two overlapping sessions exist momentarily for the same chargerId.
+     */
+    private static final class ConnectionDiagnostics {
+        final String chargerId;
+        final String sessionId;
+        final String remoteAddress;
+        final Instant connectedAt;
+        volatile Instant lastMessageReceivedAt;
+        volatile Instant lastMessageSentAt;
+        volatile Instant lastPingSentAt;
+        volatile Instant lastPongReceivedAt;
+        volatile Instant lastHeartbeatAt;
+
+        ConnectionDiagnostics(String chargerId, String sessionId, String remoteAddress, Instant connectedAt) {
+            this.chargerId = chargerId;
+            this.sessionId = sessionId;
+            this.remoteAddress = remoteAddress;
+            this.connectedAt = connectedAt;
+        }
     }
 
         public boolean sendRemoteStart(String ocppIdentity, int connectorId, String idTag) {
@@ -467,6 +633,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void handleHeartbeat(WebSocketSession session, String msgId, String chargerId) throws IOException {
+        touchDiagnostics(session.getId(), diag -> diag.lastHeartbeatAt = Instant.now());
+        logger.info("OCPP Heartbeat received chargerId={}, sessionId={}", chargerId, session.getId());
         updateChargerHeartbeat(chargerId);
         enforceAcNoEnergyTimeoutOnHeartbeat(chargerId);
         sendCallResult(session, msgId, Map.of("currentTime", Instant.now().toString()));
@@ -479,7 +647,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         boolean staleChargingWithoutSession = false;
         int staleChargingConnectorId = connectorId;
 
-        Charger charger = chargerRepository.findByOcppIdentity(chargerId)
+        Charger charger = resolveCharger(chargerId)
                 .orElseThrow(() -> new IllegalStateException("Charger not found: " + chargerId));
 
         if (connectorId == 0) {
@@ -608,7 +776,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         String idTag = payload.path("idTag").asText(null);
         logger.info("StartTransaction received chargerId={}, connectorId={}, idTag={}, meterStart={}", chargerId, connectorId, idTag, meterStart);
 
-        Charger charger = chargerRepository.findByOcppIdentity(chargerId)
+        Charger charger = resolveCharger(chargerId)
             .orElseThrow(() -> new IllegalStateException("Charger not found: " + chargerId));
 
         Optional<ChargingSession> pendingStartSession = chargingSessionRepository
@@ -1244,7 +1412,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     }
 
     private void updateChargerHeartbeat(String chargerId) {
-        chargerRepository.findByOcppIdentity(chargerId).ifPresent(charger -> {
+        resolveCharger(chargerId).ifPresent(charger -> {
             charger.setLastHeartbeat(LocalDateTime.now());
             charger.setCommunicationStatus("ONLINE");
             chargerRepository.save(charger);
@@ -1255,6 +1423,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         try {
             String call = objectMapper.writeValueAsString(new Object[]{2, messageId, action, payload});
             session.sendMessage(new TextMessage(call));
+            touchDiagnostics(session.getId(), diag -> diag.lastMessageSentAt = Instant.now());
             String chargerId = extractChargerId(session);
             persistOcppLog(chargerId, action, "OUTBOUND", call);
         } catch (IOException ex) {
@@ -1305,6 +1474,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     private void sendCallResult(WebSocketSession session, String msgId, Object payload) throws IOException {
         String callResult = objectMapper.writeValueAsString(new Object[]{3, msgId, payload});
         session.sendMessage(new TextMessage(callResult));
+        touchDiagnostics(session.getId(), diag -> diag.lastMessageSentAt = Instant.now());
         String chargerId = extractChargerId(session);
         persistOcppLog(chargerId, "CALL_RESULT", "OUTBOUND", callResult);
     }
@@ -1338,7 +1508,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             log.setDirection(direction);
             log.setPayloadJson(payloadJson);
 
-            chargerRepository.findByOcppIdentity(chargerId).ifPresent(charger -> {
+            resolveCharger(chargerId).ifPresent(charger -> {
                 log.setStationId(charger.getStationId());
             });
 
@@ -1355,7 +1525,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         }
 
         String[] segments = uri.getPath().split("/");
-        return segments.length == 0 ? "UNKNOWN" : segments[segments.length - 1];
+        return segments.length == 0 ? "UNKNOWN" : segments[segments.length - 1].trim();
     }
 
     public int getActiveSessionCount() {
@@ -1377,7 +1547,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             return false;
         }
         long offlineThresholdSeconds = resolveOfflineThresholdSeconds(ocppIdentity);
-        return chargerRepository.findByOcppIdentity(ocppIdentity)
+        return resolveCharger(ocppIdentity)
                 .map(charger -> {
                     LocalDateTime lastHb = charger.getLastHeartbeat();
                     if (lastHb == null) return false;

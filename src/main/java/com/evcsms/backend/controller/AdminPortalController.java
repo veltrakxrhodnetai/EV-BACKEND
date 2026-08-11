@@ -1438,7 +1438,7 @@ public class AdminPortalController {
 
     private void applyChargerEditableFields(Charger charger, ChargerUpsertRequest request) {
         charger.setName(request.chargerName());
-        charger.setOcppIdentity(request.chargePointIdentity());
+        charger.setOcppIdentity(request.chargePointIdentity() == null ? null : request.chargePointIdentity().trim());
         charger.setVendorName(request.vendorName());
         charger.setModel(request.model());
         charger.setSerialNumber(request.serialNumber());
