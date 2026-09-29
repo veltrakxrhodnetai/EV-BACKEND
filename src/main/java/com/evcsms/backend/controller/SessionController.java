@@ -17,6 +17,7 @@ import com.evcsms.backend.repository.ConnectorRepository;
 import com.evcsms.backend.repository.MeterValueRepository;
 import com.evcsms.backend.repository.TariffRepository;
 import com.evcsms.backend.service.ChargingSessionService;
+import com.evcsms.backend.service.AdminAuthService;
 import com.evcsms.backend.service.FailedStartRefundService;
 import com.evcsms.backend.service.Msg91OtpService;
 import com.evcsms.backend.service.OwnerAuthService;
@@ -70,6 +71,7 @@ public class SessionController {
     private final PaymentService paymentService;
     private final FailedStartRefundService failedStartRefundService;
     private final Msg91OtpService msg91OtpService;
+    private final AdminAuthService adminAuthService;
 
     public SessionController(
         ChargingSessionService chargingSessionService,
@@ -83,7 +85,8 @@ public class SessionController {
         OwnerStationAccessAspect ownerStationAccessAspect,
         PaymentService paymentService,
         FailedStartRefundService failedStartRefundService,
-        Msg91OtpService msg91OtpService
+        Msg91OtpService msg91OtpService,
+        AdminAuthService adminAuthService
     ) {
         this.chargingSessionService = chargingSessionService;
         this.chargingSessionRepository = chargingSessionRepository;
@@ -97,6 +100,7 @@ public class SessionController {
         this.paymentService = paymentService;
         this.failedStartRefundService = failedStartRefundService;
         this.msg91OtpService = msg91OtpService;
+        this.adminAuthService = adminAuthService;
     }
 
     @PostMapping("/start")
@@ -432,7 +436,15 @@ public class SessionController {
     @PostMapping("/{id}/force-stop")
     @Audit
     @Transactional
-    public ResponseEntity<?> forceStopSession(@PathVariable Long id) {
+    public ResponseEntity<?> forceStopSession(@PathVariable Long id, HttpServletRequest httpRequest) {
+        try {
+            AdminAuthService.AuthenticatedAdmin admin = adminAuthService.requireAdminFromAuthorizationHeader(
+                    httpRequest.getHeader("Authorization"));
+            adminAuthService.requireRole(admin, "SUPER_ADMIN");
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.UNAUTHORIZED, ex.getMessage(), ex);
+        }
+
         ChargingSession session = getSessionOrThrow(id);
         Charger charger = session.getCharger();
 
