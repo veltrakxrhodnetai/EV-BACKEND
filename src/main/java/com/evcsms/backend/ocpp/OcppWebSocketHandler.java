@@ -17,6 +17,7 @@ import com.evcsms.backend.repository.TariffRepository;
 import com.evcsms.backend.service.Msg91OtpService;
 import com.evcsms.backend.service.PaymentService;
 import com.evcsms.backend.service.ChargerUptimeService;
+import com.evcsms.backend.service.FailedStartRefundService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -83,6 +84,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     private final Msg91OtpService msg91OtpService;
     private final PaymentService paymentService;
     private final ChargerUptimeService chargerUptimeService;
+    private final FailedStartRefundService failedStartRefundService;
     private final ConcurrentHashMap<String, ConcurrentWebSocketSessionDecorator> activeSessions = new ConcurrentHashMap<>();
     // Keyed by the raw underlying WebSocket session id so overlapping/superseded sessions for the
     // same chargerId each keep their own diagnostics until they individually close.
@@ -128,7 +130,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
                 OcppMessageLogRepository ocppMessageLogRepository,
                 Msg91OtpService msg91OtpService,
                 PaymentService paymentService,
-                ChargerUptimeService chargerUptimeService
+                ChargerUptimeService chargerUptimeService,
+                FailedStartRefundService failedStartRefundService
     ) {
         this.objectMapper = objectMapper;
         this.chargerRepository = chargerRepository;
@@ -141,6 +144,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         this.msg91OtpService = msg91OtpService;
         this.paymentService = paymentService;
         this.chargerUptimeService = chargerUptimeService;
+        this.failedStartRefundService = failedStartRefundService;
     }
 
     @Override
@@ -1074,9 +1078,11 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             return;
         }
 
-        if ("COMPLETED".equalsIgnoreCase(chargingSession.getStatus())) {
-            logger.info("StopTransaction received for already completed sessionId={}, transactionId={}",
-                chargingSession.getId(), transactionId);
+        if ("COMPLETED".equalsIgnoreCase(chargingSession.getStatus())
+                || FailedStartRefundService.START_FAILED.equalsIgnoreCase(chargingSession.getStatus())) {
+            logger.info("StopTransaction received for terminal/failed-start sessionId={}, status={}, transactionId={}",
+                chargingSession.getId(), chargingSession.getStatus(), transactionId);
+            clearTransactionTracking(transactionId);
             sendCallResult(session, msgId, Map.of());
             return;
         }
@@ -1218,6 +1224,24 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
                 logger.debug("RemoteStop best-effort failed for sessionId={} tx={}: {}",
                         session.getId(), transactionId, ex.getMessage());
             }
+        }
+
+        if ("AC_NO_ENERGY_AT_START".equals(reason) && FailedStartRefundService.hasHeldPayment(session)) {
+            clearTransactionTracking(transactionId);
+            failedStartRefundService.markStartFailed(
+                    session,
+                    "charging started but no energy was delivered within " + acNoEnergyTimeoutSeconds + "s"
+            );
+            recordConnectorEvent(
+                    "START_FAILED_NO_ENERGY",
+                    chargerIdentity,
+                    session.getConnectorNo(),
+                    FailedStartRefundService.START_FAILED,
+                    session.getId(),
+                    transactionId,
+                    "Payment retained for retry/refund choice after no energy for " + idleSeconds + "s"
+            );
+            return;
         }
 
         completeSessionFromMeter(session, latestEnergyWh, reason, transactionId);

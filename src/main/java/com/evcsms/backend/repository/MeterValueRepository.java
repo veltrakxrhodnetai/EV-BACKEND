@@ -10,6 +10,8 @@ public interface MeterValueRepository extends JpaRepository<MeterValue, Long> {
 
     List<MeterValue> findBySessionId(Long sessionId);
 
+    void deleteBySessionId(Long sessionId);
+
     Optional<MeterValue> findTopBySessionIdOrderByTimestampDesc(Long sessionId);
 
     Optional<MeterValue> findTopBySessionIdOrderByTimestampDescIdDesc(Long sessionId);

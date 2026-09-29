@@ -611,7 +611,19 @@ public class ChargingSessionService {
             }
             session = chargingSessionRepository.findById(sessionId)
                     .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId));
+            meterValueRepository.deleteBySessionId(sessionId);
+            session.setOcppTransactionId(null);
+            session.setMeterStart(null);
+            session.setMeterStop(null);
+            session.setEnergyConsumedKwh(0.0);
+            session.setBaseAmount(0.0);
+            session.setGstAmount(0.0);
+            session.setTotalAmount(0.0);
+            session.setPlatformFee(0.0);
+            session.setOwnerRevenue(0.0);
+            session.setStartedAt(null);
             session.setEndedAt(null);
+            session = chargingSessionRepository.saveAndFlush(session);
             logger.info("Session {} retrying charging with held payment {}", sessionId, session.getPreauthId());
         }
 
