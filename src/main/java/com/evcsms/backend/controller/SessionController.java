@@ -17,6 +17,8 @@ import com.evcsms.backend.repository.ConnectorRepository;
 import com.evcsms.backend.repository.MeterValueRepository;
 import com.evcsms.backend.repository.TariffRepository;
 import com.evcsms.backend.service.ChargingSessionService;
+import com.evcsms.backend.service.FailedStartRefundService;
+import com.evcsms.backend.service.Msg91OtpService;
 import com.evcsms.backend.service.OwnerAuthService;
 import com.evcsms.backend.service.PaymentService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -66,6 +68,8 @@ public class SessionController {
     private final OcppWebSocketHandler ocppWebSocketHandler;
     private final OwnerStationAccessAspect ownerStationAccessAspect;
     private final PaymentService paymentService;
+    private final FailedStartRefundService failedStartRefundService;
+    private final Msg91OtpService msg91OtpService;
 
     public SessionController(
         ChargingSessionService chargingSessionService,
@@ -77,7 +81,9 @@ public class SessionController {
         CompletedChargingLogRepository completedChargingLogRepository,
         OcppWebSocketHandler ocppWebSocketHandler,
         OwnerStationAccessAspect ownerStationAccessAspect,
-        PaymentService paymentService
+        PaymentService paymentService,
+        FailedStartRefundService failedStartRefundService,
+        Msg91OtpService msg91OtpService
     ) {
         this.chargingSessionService = chargingSessionService;
         this.chargingSessionRepository = chargingSessionRepository;
@@ -89,6 +95,8 @@ public class SessionController {
         this.ocppWebSocketHandler = ocppWebSocketHandler;
         this.ownerStationAccessAspect = ownerStationAccessAspect;
         this.paymentService = paymentService;
+        this.failedStartRefundService = failedStartRefundService;
+        this.msg91OtpService = msg91OtpService;
     }
 
     @PostMapping("/start")
@@ -209,15 +217,12 @@ public class SessionController {
         chargingSessionRepository
                 .findFirstByCharger_IdAndConnectorNoAndStatusOrderByCreatedAtDesc(chargerId, connectorNo, "PENDING_START")
                 .ifPresent(session -> {
-                    boolean tooOld = session.getCreatedAt() != null
-                            && Duration.between(session.getCreatedAt(), now).toMinutes() >= 3;
                     boolean noTransaction = session.getOcppTransactionId() == null;
-                    if (tooOld && noTransaction) {
+                    if (isPendingStartStale(session, now) && noTransaction) {
                         logger.warn("Expiring stale PENDING_START sessionId={} chargerId={} connectorNo={}",
                                 session.getId(), chargerId, connectorNo);
-                        session.setStatus("FAILED");
-                        session.setEndedAt(now);
-                        chargingSessionRepository.save(session);
+                        failedStartRefundService.markPendingStartFailed(session.getId(),
+                                "charger did not start the transaction before the connector was requested again");
                     }
                 });
 
@@ -277,14 +282,24 @@ public class SessionController {
         session.setStatus("CANCELLED");
         session.setEndedAt(LocalDateTime.now());
 
+        Double refundSmsAmount = null;
         if ("PENDING_PAYMENT".equalsIgnoreCase(status)
                 && session.getPreauthId() != null
                 && session.getPreauthAmount() != null
                 && session.getPreauthAmount() > 0) {
             try {
-                paymentService.release(session.getPreauthId(), BigDecimal.valueOf(session.getPreauthAmount()));
-                session.setPaymentStatus("PREAUTH_RELEASED");
-                logger.info("Released preauth {} for cancelled session {}", session.getPreauthId(), session.getId());
+                PaymentService.ReleaseResult releaseResult =
+                        paymentService.release(session.getPreauthId(), BigDecimal.valueOf(session.getPreauthAmount()));
+                if (releaseResult.success()) {
+                    session.setPaymentStatus("PREAUTH_RELEASED");
+                    session.setRefundAmount(session.getPreauthAmount());
+                    refundSmsAmount = session.getPreauthAmount();
+                    logger.info("Released preauth {} for cancelled session {}", session.getPreauthId(), session.getId());
+                } else {
+                    session.setPaymentStatus("REFUND_FAILED");
+                    logger.error("Release of preauth {} FAILED for cancelled session {}; manual refund required",
+                            session.getPreauthId(), session.getId());
+                }
             } catch (Exception ex) {
                 logger.warn("Failed to release preauth {} for cancelled session {}: {}",
                         session.getPreauthId(), session.getId(), ex.getMessage());
@@ -292,6 +307,10 @@ public class SessionController {
         }
 
         chargingSessionRepository.save(session);
+
+        if (refundSmsAmount != null) {
+            msg91OtpService.sendRefundInitiatedMessage(session.getPhoneNumber(), refundSmsAmount);
+        }
 
         // Restore connector to Available so it can accept new sessions
         try {
@@ -324,14 +343,50 @@ public class SessionController {
             response.put("preauthId", session.getPreauthId());
             return ResponseEntity.ok(response);
         } catch (IllegalStateException ex) {
-            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
+            return ResponseEntity.badRequest().body(startFailureBody(id, ex.getMessage()));
         } catch (RuntimeException ex) {
             logger.error("Failed pay-and-start for sessionId={}", id, ex);
-            throw new ResponseStatusException(
-                    HttpStatus.INTERNAL_SERVER_ERROR,
-                    "Failed to process payment/start charging: " + ex.getMessage(),
-                    ex
-            );
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR)
+                    .body(startFailureBody(id, "Failed to process payment/start charging: " + ex.getMessage()));
+        }
+    }
+
+    /** Error body for pay-and-start that tells the app whether the customer's payment is held (START_FAILED). */
+    private Map<String, Object> startFailureBody(Long id, String message) {
+        Map<String, Object> body = new LinkedHashMap<>();
+        body.put("error", message == null ? "Failed to start charging" : message);
+        body.put("sessionId", id);
+        chargingSessionRepository.findById(id).ifPresent(session -> {
+            body.put("status", session.getStatus());
+            body.put("paymentStatus", session.getPaymentStatus());
+            body.put("preauthAmount", session.getPreauthAmount());
+            body.put("autoRefundInSeconds", failedStartRefundService.secondsUntilAutoRefund(session));
+        });
+        return body;
+    }
+
+    /**
+     * Customer chose a refund (or closed the retry/refund prompt) for a paid session whose charging never started.
+     * To retry charging with the held amount instead, the app calls pay-and-start without a payment id.
+     */
+    @PostMapping("/{id}/refund-failed-start")
+    @Audit
+    public ResponseEntity<?> refundFailedStart(@PathVariable Long id) {
+        try {
+            FailedStartRefundService.RefundOutcome outcome = failedStartRefundService.refundFailedStart(id, "CUSTOMER_REQUEST");
+            Map<String, Object> response = new LinkedHashMap<>();
+            response.put("sessionId", id);
+            response.put("refundAmount", outcome.amount());
+            response.put("paymentStatus", outcome.paymentStatus());
+            response.put("success", outcome.success());
+            response.put("message", outcome.success()
+                    ? "Refund initiated. It will be credited to your original payment method once processing is complete."
+                    : "We could not initiate the refund automatically. Our team has been notified and will process it.");
+            return ResponseEntity.ok(response);
+        } catch (IllegalArgumentException ex) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, ex.getMessage(), ex);
+        } catch (IllegalStateException ex) {
+            return ResponseEntity.badRequest().body(Map.of("error", ex.getMessage()));
         }
     }
 
@@ -419,14 +474,13 @@ public class SessionController {
         // Guard against stuck sessions when RemoteStart was never accepted or charger is disconnected.
         if ("PENDING_START".equalsIgnoreCase(session.getStatus()) && session.getOcppTransactionId() == null) {
             boolean chargerOnline = ocppWebSocketHandler.isChargerConnected(charger.getOcppIdentity());
-            boolean stalePendingStart = session.getCreatedAt() != null
-                    && Duration.between(session.getCreatedAt(), LocalDateTime.now()).toMinutes() >= 3;
+            boolean stalePendingStart = isPendingStartStale(session, LocalDateTime.now());
             if (!chargerOnline || stalePendingStart) {
                 logger.warn("Auto-failing stale/offline PENDING_START sessionId={} chargerId={} online={} stale={}",
                         session.getId(), charger.getOcppIdentity(), chargerOnline, stalePendingStart);
-                session.setStatus("FAILED");
-                session.setEndedAt(LocalDateTime.now());
-                chargingSessionRepository.save(session);
+                failedStartRefundService.markPendingStartFailed(session.getId(), chargerOnline
+                        ? "charger did not start the transaction in time"
+                        : "charger went offline before charging started");
                 session = getSessionOrThrow(id);
             }
         }
@@ -520,6 +574,10 @@ public class SessionController {
         Integer txId = session.getOcppTransactionId();
         Double latestSoc = ocppWebSocketHandler.getLatestSoc(txId);
         response.put("socPercent", latestSoc);
+        response.put("paymentStatus", session.getPaymentStatus());
+        response.put("preauthAmount", session.getPreauthAmount());
+        response.put("refundAmount", session.getRefundAmount());
+        response.put("autoRefundInSeconds", failedStartRefundService.secondsUntilAutoRefund(session));
         return ResponseEntity.ok(response);
     }
 
@@ -654,7 +712,7 @@ public class SessionController {
             return ResponseEntity.badRequest().body(Map.of("error", "phoneNumber is required"));
         }
 
-        Set<String> activeStatuses = Set.of("PENDING_VERIFICATION", "PENDING_PAYMENT", "PENDING_START", "ACTIVE", "STOPPING");
+        Set<String> activeStatuses = Set.of("PENDING_VERIFICATION", "PENDING_PAYMENT", "PENDING_START", "ACTIVE", "STOPPING", FailedStartRefundService.START_FAILED);
 
         List<ChargingSession> sessions = chargingSessionRepository
                 .findByPhoneNumberAndStatusInOrderByCreatedAtDesc(normalizedPhone, activeStatuses);
@@ -738,7 +796,7 @@ public class SessionController {
 
     @GetMapping("/monitor/active-sessions")
     public ResponseEntity<?> getActiveSessionsMonitor() {
-        Set<String> activeStatuses = Set.of("PENDING_VERIFICATION", "PENDING_PAYMENT", "PENDING_START", "ACTIVE", "STOPPING");
+        Set<String> activeStatuses = Set.of("PENDING_VERIFICATION", "PENDING_PAYMENT", "PENDING_START", "ACTIVE", "STOPPING", FailedStartRefundService.START_FAILED);
 
         List<Map<String, Object>> sessions = chargingSessionRepository
             .findByStatusInWithChargerOrderByCreatedAtDesc(activeStatuses)
@@ -1011,6 +1069,13 @@ public class SessionController {
             "connectorsReset", connectorsReset,
             "sessionsCompleted", sessionsCompleted
         ));
+    }
+
+    /** PENDING_START is entered right after payment, so measure from the last update rather than session creation. */
+    private boolean isPendingStartStale(ChargingSession session, LocalDateTime now) {
+        LocalDateTime since = session.getUpdatedAt() != null ? session.getUpdatedAt() : session.getCreatedAt();
+        return since != null
+                && Duration.between(since, now).getSeconds() >= failedStartRefundService.getPendingStartTimeoutSeconds();
     }
 
     private ChargingSession getSessionOrThrow(Long id) {

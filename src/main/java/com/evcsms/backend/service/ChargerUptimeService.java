@@ -8,6 +8,8 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.boot.context.event.ApplicationReadyEvent;
+import org.springframework.context.event.EventListener;
 
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -26,6 +28,23 @@ public class ChargerUptimeService {
                                 ChargerRepository chargerRepository) {
         this.statusLogRepository = statusLogRepository;
         this.chargerRepository = chargerRepository;
+    }
+
+    @EventListener(ApplicationReadyEvent.class)
+    @Transactional
+    public void initializeMissingStatusIntervals() {
+        for (Charger charger : chargerRepository.findAll()) {
+            if (charger.getOcppIdentity() == null || charger.getOcppIdentity().isBlank()) {
+                continue;
+            }
+            boolean hasOpenInterval = statusLogRepository
+                    .findTopByOcppIdentityAndEndedAtIsNullOrderByStartedAtDesc(charger.getOcppIdentity())
+                    .isPresent();
+            if (!hasOpenInterval) {
+                String status = "ONLINE".equalsIgnoreCase(charger.getCommunicationStatus()) ? "ONLINE" : "OFFLINE";
+                recordStatusChange(charger.getOcppIdentity(), status);
+            }
+        }
     }
 
     @Transactional
@@ -73,8 +92,7 @@ public class ChargerUptimeService {
         LocalDateTime to = toDate.plusDays(1).atStartOfDay();
         LocalDateTime now = LocalDateTime.now();
 
-        List<ChargerStatusLog> allLogs = statusLogRepository
-                .findByStartedAtBetweenOrderByChargerIdAscStartedAtAsc(from, to);
+        List<ChargerStatusLog> allLogs = statusLogRepository.findOverlapping(from, to);
 
         Map<Long, ChargerUptimeSummary> summaryMap = new LinkedHashMap<>();
 
@@ -84,7 +102,7 @@ public class ChargerUptimeService {
                     log.getChargerId(), log.getChargerName(), log.getOcppIdentity(), log.getStationId()
             ));
 
-            long duration = effectiveDuration(log, now);
+            long duration = effectiveDuration(log, from, to, now);
             ChargerUptimeSummary summary = summaryMap.get(key);
             accumulateDuration(summary, log.getStatus(), duration);
             summary.statusLogs.add(toEntry(log, duration));
@@ -99,8 +117,7 @@ public class ChargerUptimeService {
         LocalDateTime to = toDate.plusDays(1).atStartOfDay();
         LocalDateTime now = LocalDateTime.now();
 
-        List<ChargerStatusLog> logs = statusLogRepository
-                .findByChargerIdAndStartedAtBetweenOrderByStartedAtAsc(chargerId, from, to);
+        List<ChargerStatusLog> logs = statusLogRepository.findOverlappingByChargerId(chargerId, from, to);
 
         Charger charger = chargerRepository.findById(chargerId).orElse(null);
         ChargerUptimeSummary summary = new ChargerUptimeSummary(
@@ -111,7 +128,7 @@ public class ChargerUptimeService {
         );
 
         for (ChargerStatusLog log : logs) {
-            long duration = effectiveDuration(log, now);
+            long duration = effectiveDuration(log, from, to, now);
             accumulateDuration(summary, log.getStatus(), duration);
             summary.statusLogs.add(toEntry(log, duration));
         }
@@ -119,12 +136,20 @@ public class ChargerUptimeService {
         return summary;
     }
 
-    private long effectiveDuration(ChargerStatusLog log, LocalDateTime now) {
-        if (log.getDurationSeconds() != null) {
-            return log.getDurationSeconds();
+    private long effectiveDuration(
+            ChargerStatusLog log,
+            LocalDateTime rangeStart,
+            LocalDateTime rangeEnd,
+            LocalDateTime now
+    ) {
+        LocalDateTime effectiveStart = log.getStartedAt().isAfter(rangeStart) ? log.getStartedAt() : rangeStart;
+        LocalDateTime logEnd = log.getEndedAt() != null ? log.getEndedAt() : now;
+        LocalDateTime cappedRangeEnd = rangeEnd.isBefore(now) ? rangeEnd : now;
+        LocalDateTime effectiveEnd = logEnd.isBefore(cappedRangeEnd) ? logEnd : cappedRangeEnd;
+        if (!effectiveEnd.isAfter(effectiveStart)) {
+            return 0L;
         }
-        LocalDateTime end = log.getEndedAt() != null ? log.getEndedAt() : now;
-        return ChronoUnit.SECONDS.between(log.getStartedAt(), end);
+        return ChronoUnit.SECONDS.between(effectiveStart, effectiveEnd);
     }
 
     private void accumulateDuration(ChargerUptimeSummary summary, String status, long seconds) {

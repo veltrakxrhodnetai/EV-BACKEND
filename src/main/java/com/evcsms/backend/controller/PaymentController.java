@@ -4,6 +4,7 @@ import com.evcsms.backend.audit.Audit;
 import com.evcsms.backend.dto.PaymentCaptureRequest;
 import com.evcsms.backend.dto.PaymentPreAuthRequest;
 import com.evcsms.backend.dto.PaymentRefundRequest;
+import com.evcsms.backend.service.FailedStartRefundService;
 import com.evcsms.backend.service.PaymentService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -29,12 +30,15 @@ public class PaymentController {
     private static final Logger logger = LoggerFactory.getLogger(PaymentController.class);
 
     private final PaymentService paymentService;
+    private final FailedStartRefundService failedStartRefundService;
     private final ObjectMapper objectMapper;
     private final String razorpayKeyId;
 
     public PaymentController(PaymentService paymentService,
+                             FailedStartRefundService failedStartRefundService,
                              @Value("${razorpay.key-id:}") String razorpayKeyId) {
         this.paymentService = paymentService;
+        this.failedStartRefundService = failedStartRefundService;
         this.objectMapper = new ObjectMapper();
         this.razorpayKeyId = razorpayKeyId;
     }
@@ -142,6 +146,20 @@ public class PaymentController {
 
             // Route to service for processing
             paymentService.handleRazorpayWebhookEvent(eventType, paymentId, status, amount);
+
+            // Safety net: if the app never reported this payment (closed/network drop after Checkout),
+            // attach it to the session so it gets a retry/refund choice and is auto-refunded otherwise.
+            JsonNode sessionIdNote = eventData.path("notes").path("sessionId");
+            if (("payment.captured".equals(eventType) || "payment.authorized".equals(eventType))
+                    && sessionIdNote.isValueNode() && !sessionIdNote.asText().isBlank()) {
+                try {
+                    Long sessionId = Long.parseLong(sessionIdNote.asText().trim());
+                    failedStartRefundService.linkWebhookPayment(sessionId, paymentId,
+                            java.math.BigDecimal.valueOf(amount).movePointLeft(2));
+                } catch (NumberFormatException ex) {
+                    logger.warn("[WEBHOOK] Ignoring non-numeric sessionId note '{}' on payment {}", sessionIdNote.asText(), paymentId);
+                }
+            }
 
             logger.info("[WEBHOOK] Successfully processed {} event", eventType);
             return ResponseEntity.ok("{\"status\":\"received\"}");

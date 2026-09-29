@@ -1,9 +1,13 @@
 package com.evcsms.backend.repository;
 
 import com.evcsms.backend.model.ChargingSession;
+import jakarta.persistence.LockModeType;
 import org.springframework.data.jpa.repository.JpaRepository;
+import org.springframework.data.jpa.repository.Lock;
+import org.springframework.data.jpa.repository.Modifying;
 import org.springframework.data.repository.query.Param;
 import org.springframework.data.jpa.repository.Query;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.Collection;
@@ -17,6 +21,25 @@ public interface ChargingSessionRepository extends JpaRepository<ChargingSession
 
     @Query("SELECT cs FROM ChargingSession cs JOIN FETCH cs.charger ch JOIN FETCH ch.station JOIN FETCH cs.connector WHERE cs.id = :id")
     Optional<ChargingSession> findByIdWithChargerAndConnector(@Param("id") Long id);
+
+    @Lock(LockModeType.PESSIMISTIC_WRITE)
+    @Query("SELECT cs FROM ChargingSession cs WHERE cs.id = :id")
+    Optional<ChargingSession> findByIdForUpdate(@Param("id") Long id);
+
+    /** Atomically moves a session between statuses; returns 0 if the session was no longer in {@code fromStatus}. */
+    @Transactional
+    @Modifying(clearAutomatically = true, flushAutomatically = true)
+    @Query("UPDATE ChargingSession cs SET cs.status = :toStatus, cs.updatedAt = :now WHERE cs.id = :id AND cs.status = :fromStatus")
+    int transitionStatus(@Param("id") Long id,
+                         @Param("fromStatus") String fromStatus,
+                         @Param("toStatus") String toStatus,
+                         @Param("now") LocalDateTime now);
+
+    List<ChargingSession> findByStatusAndEndedAtBefore(String status, LocalDateTime cutoff);
+
+    List<ChargingSession> findByStatusAndOcppTransactionIdIsNullAndUpdatedAtBefore(String status, LocalDateTime cutoff);
+
+    List<ChargingSession> findByStatusAndPaymentStatusAndUpdatedAtBefore(String status, String paymentStatus, LocalDateTime cutoff);
 
     Optional<ChargingSession> findByCharger_IdAndConnector_IdAndStatus(Long chargerId, Long connectorId, String status);
 

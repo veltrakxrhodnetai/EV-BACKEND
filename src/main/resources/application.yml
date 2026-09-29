@@ -62,9 +62,16 @@ management:
 
 # Payment gateway configuration
 app:
+  logs:
+    system-retention-days: ${APP_LOGS_SYSTEM_RETENTION_DAYS:7}
+    system-cleanup-cron: ${APP_LOGS_SYSTEM_CLEANUP_CRON:0 15 2 * * *}
   charging:
-    ac-no-energy-timeout-seconds: ${APP_CHARGING_AC_NO_ENERGY_TIMEOUT_SECONDS:60}
+    ac-no-energy-timeout-seconds: ${APP_CHARGING_AC_NO_ENERGY_TIMEOUT_SECONDS:120}
     offline-session-timeout-seconds: ${APP_CHARGING_OFFLINE_SESSION_TIMEOUT_SECONDS:120}
+    # Paid session whose charging never started: seconds before a PENDING_START without StartTransaction is treated as failed,
+    # and seconds the customer gets to choose "retry" or "refund" before the payment is refunded automatically.
+    pending-start-timeout-seconds: ${APP_CHARGING_PENDING_START_TIMEOUT_SECONDS:180}
+    failed-start-auto-refund-seconds: ${APP_CHARGING_FAILED_START_AUTO_REFUND_SECONDS:300}
   ocpp:
     presence:
       minimum-offline-threshold-seconds: ${APP_OCPP_MINIMUM_OFFLINE_THRESHOLD_SECONDS:90}
@@ -92,6 +99,8 @@ app:
         flow-endpoint: ${MSG91_FLOW_ENDPOINT:https://control.msg91.com/api/v5/flow}
         flow-otp-var-name: ${MSG91_FLOW_OTP_VAR_NAME:VAR1}
         charge-complete-template-id: ${MSG91_CHARGE_COMPLETE_TEMPLATE_ID:69e8c91aec4ab5ed1b08dfe2}
+        refund-initiated-template-id: ${MSG91_REFUND_INITIATED_TEMPLATE_ID:6abac058a0b6cd5d20079b82}
+        refund-amount-var-name: ${MSG91_REFUND_AMOUNT_VAR_NAME:var1}
 
 # Razorpay configuration
 razorpay:

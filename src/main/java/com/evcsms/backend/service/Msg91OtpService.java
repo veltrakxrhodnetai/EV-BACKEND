@@ -34,6 +34,8 @@ public class Msg91OtpService {
     private final String flowEndpoint;
     private final String flowOtpVarName;
     private final String chargeCompleteTemplateId;
+    private final String refundInitiatedTemplateId;
+    private final String refundAmountVarName;
 
     public Msg91OtpService(
             @Value("${app.auth.otp.msg91.enabled:true}") boolean enabled,
@@ -44,7 +46,9 @@ public class Msg91OtpService {
             @Value("${app.auth.otp.msg91.mode:auto}") String mode,
             @Value("${app.auth.otp.msg91.flow-endpoint:https://control.msg91.com/api/v5/flow}") String flowEndpoint,
                 @Value("${app.auth.otp.msg91.flow-otp-var-name:OTP}") String flowOtpVarName,
-                @Value("${app.auth.otp.msg91.charge-complete-template-id:69e8c91aec4ab5ed1b08dfe2}") String chargeCompleteTemplateId
+                @Value("${app.auth.otp.msg91.charge-complete-template-id:69e8c91aec4ab5ed1b08dfe2}") String chargeCompleteTemplateId,
+                @Value("${app.auth.otp.msg91.refund-initiated-template-id:6abac058a0b6cd5d20079b82}") String refundInitiatedTemplateId,
+                @Value("${app.auth.otp.msg91.refund-amount-var-name:var1}") String refundAmountVarName
     ) {
         this.httpClient = HttpClient.newBuilder()
                 .connectTimeout(Duration.ofSeconds(10))
@@ -59,11 +63,13 @@ public class Msg91OtpService {
         this.flowEndpoint = firstNonBlank(flowEndpoint, "https://control.msg91.com/api/v5/flow");
         this.flowOtpVarName = firstNonBlank(flowOtpVarName, "OTP");
         this.chargeCompleteTemplateId = firstNonBlank(chargeCompleteTemplateId, "69e8c91aec4ab5ed1b08dfe2");
+        this.refundInitiatedTemplateId = firstNonBlank(refundInitiatedTemplateId, "6abac058a0b6cd5d20079b82");
+        this.refundAmountVarName = firstNonBlank(refundAmountVarName, "var1");
     }
 
     @PostConstruct
     void logResolvedConfig() {
-        logger.info("MSG91 config resolved: enabled={}, authKeyPresent={}, templateId={}, countryCode={}, endpoint={}, mode={}, flowEndpoint={}, flowOtpVarName={}, chargeCompleteTemplateId={}",
+        logger.info("MSG91 config resolved: enabled={}, authKeyPresent={}, templateId={}, countryCode={}, endpoint={}, mode={}, flowEndpoint={}, flowOtpVarName={}, chargeCompleteTemplateId={}, refundInitiatedTemplateId={}",
                 enabled,
                 authKey != null && !authKey.isBlank(),
                 templateId,
@@ -72,18 +78,36 @@ public class Msg91OtpService {
             mode,
             flowEndpoint,
             flowOtpVarName,
-            chargeCompleteTemplateId);
+            chargeCompleteTemplateId,
+            refundInitiatedTemplateId);
     }
 
     public void sendChargeCompleteMessage(String phoneNumber) {
-        if (!enabled || authKey == null || authKey.isBlank() || chargeCompleteTemplateId == null || chargeCompleteTemplateId.isBlank()) {
-            logger.warn("Skipping charge completion SMS due to missing MSG91 configuration");
+        sendTransactionalSms("charge completion", chargeCompleteTemplateId, phoneNumber, Map.of());
+    }
+
+    /**
+     * Notifies the customer that a refund has been initiated. Template text:
+     * "Thank you for choosing Veltrak! Your refund amount ##var1## has been initiated and will be
+     * credited to your original payment account once processing is complete."
+     */
+    public void sendRefundInitiatedMessage(String phoneNumber, double refundAmount) {
+        String formattedAmount = "Rs. " + java.math.BigDecimal.valueOf(refundAmount)
+                .setScale(2, java.math.RoundingMode.HALF_UP)
+                .toPlainString();
+        sendTransactionalSms("refund initiated", refundInitiatedTemplateId, phoneNumber,
+                Map.of(refundAmountVarName, formattedAmount));
+    }
+
+    private void sendTransactionalSms(String label, String flowTemplateId, String phoneNumber, Map<String, String> variables) {
+        if (!enabled || authKey == null || authKey.isBlank() || flowTemplateId == null || flowTemplateId.isBlank()) {
+            logger.warn("Skipping {} SMS due to missing MSG91 configuration", label);
             return;
         }
 
         String normalizedPhone = normalizePhone(phoneNumber);
         if (normalizedPhone == null || normalizedPhone.isBlank()) {
-            logger.warn("Skipping charge completion SMS due to empty phone number");
+            logger.warn("Skipping {} SMS due to empty phone number", label);
             return;
         }
 
@@ -92,9 +116,10 @@ public class Msg91OtpService {
         try {
             Map<String, Object> recipient = new java.util.LinkedHashMap<>();
             recipient.put("mobiles", mobile);
+            recipient.putAll(variables);
 
             Map<String, Object> requestBody = new java.util.LinkedHashMap<>();
-            requestBody.put("template_id", chargeCompleteTemplateId);
+            requestBody.put("template_id", flowTemplateId);
             requestBody.put("short_url", "0");
             requestBody.put("realTimeResponse", "1");
             requestBody.put("recipients", java.util.List.of(recipient));
@@ -110,20 +135,20 @@ public class Msg91OtpService {
             HttpResponse<String> response = httpClient.send(request, HttpResponse.BodyHandlers.ofString());
 
             if (response.statusCode() < 200 || response.statusCode() >= 300) {
-                logger.error("MSG91 charge completion SMS failed with HTTP {}: {}", response.statusCode(), compactMessage(response.body()));
+                logger.error("MSG91 {} SMS failed with HTTP {}: {}", label, response.statusCode(), compactMessage(response.body()));
                 return;
             }
 
             Map<String, Object> payload = objectMapper.readValue(response.body(), Map.class);
             Object type = payload.get("type");
             if (type != null && "success".equalsIgnoreCase(String.valueOf(type))) {
-                logger.info("MSG91 charge completion SMS sent successfully to +{}{}", countryCode, normalizedPhone);
+                logger.info("MSG91 {} SMS sent successfully to +{}{}", label, countryCode, normalizedPhone);
                 return;
             }
 
-            logger.error("MSG91 charge completion SMS rejected: {}", compactMessage(response.body()));
+            logger.error("MSG91 {} SMS rejected: {}", label, compactMessage(response.body()));
         } catch (Exception ex) {
-            logger.error("MSG91 charge completion SMS error for phone {}: {}", phoneNumber, ex.getMessage(), ex);
+            logger.error("MSG91 {} SMS error for phone {}: {}", label, phoneNumber, ex.getMessage(), ex);
         }
     }
 

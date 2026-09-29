@@ -16,6 +16,7 @@ import com.evcsms.backend.repository.OcppMessageLogRepository;
 import com.evcsms.backend.repository.TariffRepository;
 import com.evcsms.backend.service.Msg91OtpService;
 import com.evcsms.backend.service.PaymentService;
+import com.evcsms.backend.service.ChargerUptimeService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import org.springframework.beans.factory.annotation.Value;
@@ -81,6 +82,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
     private final OcppMessageLogRepository ocppMessageLogRepository;
     private final Msg91OtpService msg91OtpService;
     private final PaymentService paymentService;
+    private final ChargerUptimeService chargerUptimeService;
     private final ConcurrentHashMap<String, ConcurrentWebSocketSessionDecorator> activeSessions = new ConcurrentHashMap<>();
     // Keyed by the raw underlying WebSocket session id so overlapping/superseded sessions for the
     // same chargerId each keep their own diagnostics until they individually close.
@@ -103,7 +105,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             "STOPPING"
         );
 
-    @Value("${app.charging.ac-no-energy-timeout-seconds:60}")
+    @Value("${app.charging.ac-no-energy-timeout-seconds:120}")
     private int acNoEnergyTimeoutSeconds;
 
     @Value("${app.ocpp.presence.minimum-offline-threshold-seconds:90}")
@@ -125,7 +127,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             OcppConfigurationRepository ocppConfigurationRepository,
                 OcppMessageLogRepository ocppMessageLogRepository,
                 Msg91OtpService msg91OtpService,
-                PaymentService paymentService
+                PaymentService paymentService,
+                ChargerUptimeService chargerUptimeService
     ) {
         this.objectMapper = objectMapper;
         this.chargerRepository = chargerRepository;
@@ -137,6 +140,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         this.ocppMessageLogRepository = ocppMessageLogRepository;
         this.msg91OtpService = msg91OtpService;
         this.paymentService = paymentService;
+        this.chargerUptimeService = chargerUptimeService;
     }
 
     @Override
@@ -185,6 +189,7 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
             charger.setCommunicationStatus("ONLINE");
             charger.setLastHeartbeat(LocalDateTime.now());
             chargerRepository.save(charger);
+            updateUptimeFromConnectorStatuses(charger, charger.getStatus());
         });
         logger.info("OCPP connection established for chargerId={}, sessionId={}, remote={}, uri={}, protocol={}",
             chargerId,
@@ -349,13 +354,18 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
 
         // Only remove the map entry if it still points at THIS session. If a newer session for the
         // same chargerId has already replaced it, this stale close must not unregister the new one.
-        activeSessions.computeIfPresent(chargerId, (id, current) ->
-                current.getId().equals(session.getId()) ? null : current);
+        ConcurrentWebSocketSessionDecorator currentSession = activeSessions.get(chargerId);
+        boolean closedActiveSession = currentSession != null
+                && currentSession.getId().equals(session.getId())
+                && activeSessions.remove(chargerId, currentSession);
 
-        resolveCharger(chargerId).ifPresent(charger -> {
-            charger.setCommunicationStatus("OFFLINE");
-            chargerRepository.save(charger);
-        });
+        if (closedActiveSession) {
+            resolveCharger(chargerId).ifPresent(charger -> {
+                charger.setCommunicationStatus("OFFLINE");
+                chargerRepository.save(charger);
+            });
+            chargerUptimeService.recordStatusChange(chargerId, "OFFLINE");
+        }
 
         logConnectionDiagnosticsOnClose(chargerId, session, status);
 
@@ -711,6 +721,8 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
                 }
         }
 
+        updateUptimeFromConnectorStatuses(charger, status);
+
         logger.debug("StatusNotification processed chargerId={}, connectorId={}, status={}", chargerId, connectorId, status);
         sendCallResult(session, msgId, Map.of());
 
@@ -724,6 +736,17 @@ public class OcppWebSocketHandler extends TextWebSocketHandler {
         return "Finishing".equalsIgnoreCase(status)
                 || "Unavailable".equalsIgnoreCase(status)
                 || "Charging".equalsIgnoreCase(status);
+    }
+
+    private void updateUptimeFromConnectorStatuses(Charger charger, String reportedStatus) {
+        boolean faulted = "Faulted".equalsIgnoreCase(reportedStatus)
+                || "Faulted".equalsIgnoreCase(charger.getStatus())
+                || connectorRepository.findByCharger_Id(charger.getId()).stream()
+                .anyMatch(connector -> "Faulted".equalsIgnoreCase(connector.getStatus()));
+        chargerUptimeService.recordStatusChange(
+                charger.getOcppIdentity(),
+                faulted ? "FAULTED" : "ONLINE"
+        );
     }
 
         private void mitigateStaleChargingWithoutSession(String chargerId, int connectorId) {

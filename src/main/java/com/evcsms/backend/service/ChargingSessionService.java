@@ -37,6 +37,7 @@ public class ChargingSessionService {
     private final OcppWebSocketHandler ocppWebSocketHandler;
     private final PaymentService paymentService;
     private final Msg91OtpService msg91OtpService;
+    private final FailedStartRefundService failedStartRefundService;
 
     public ChargingSessionService(
             ChargingSessionRepository chargingSessionRepository,
@@ -46,7 +47,8 @@ public class ChargingSessionService {
             TariffRepository tariffRepository,
             OcppWebSocketHandler ocppWebSocketHandler,
                 PaymentService paymentService,
-                Msg91OtpService msg91OtpService
+                Msg91OtpService msg91OtpService,
+                FailedStartRefundService failedStartRefundService
     ) {
         this.chargingSessionRepository = chargingSessionRepository;
         this.chargerRepository = chargerRepository;
@@ -56,6 +58,7 @@ public class ChargingSessionService {
         this.ocppWebSocketHandler = ocppWebSocketHandler;
         this.paymentService = paymentService;
         this.msg91OtpService = msg91OtpService;
+        this.failedStartRefundService = failedStartRefundService;
     }
 
     @Transactional(readOnly = true)
@@ -259,6 +262,7 @@ public class ChargingSessionService {
         chargingSessionRepository.save(session);
 
         msg91OtpService.sendChargeCompleteMessage(session.getPhoneNumber());
+        sendRefundSmsIfRefunded(session);
 
         if (charger != null) {
             connectorRepository.findByCharger_IdAndConnectorNo(charger.getId(), session.getConnectorNo())
@@ -306,6 +310,7 @@ public class ChargingSessionService {
             chargingSessionRepository.save(session);
 
             msg91OtpService.sendChargeCompleteMessage(session.getPhoneNumber());
+            sendRefundSmsIfRefunded(session);
 
             if (charger != null) {
                 connectorRepository.findByCharger_IdAndConnectorNo(charger.getId(), session.getConnectorNo())
@@ -425,6 +430,12 @@ public class ChargingSessionService {
             logger.error("Payment settlement failed for session {}: {}", 
                 session.getId(), ex.getMessage(), ex);
             session.setPaymentStatus("SETTLEMENT_FAILED");
+        }
+    }
+
+    private void sendRefundSmsIfRefunded(ChargingSession session) {
+        if (session.getRefundId() != null && session.getRefundAmount() != null && session.getRefundAmount() > 0.01) {
+            msg91OtpService.sendRefundInitiatedMessage(session.getPhoneNumber(), session.getRefundAmount());
         }
     }
 
@@ -586,6 +597,24 @@ public class ChargingSessionService {
         logger.info("acceptPaymentAndStartCharging called for sessionId={}, status={}, paymentStatus={}",
                 sessionId, session.getStatus(), session.getPaymentStatus());
 
+        // Customer chose "charge with the amount already paid" after a failed start. Claim the session atomically
+        // so the auto-refund job cannot refund it while the retry is in progress.
+        boolean retryWithHeldPayment = FailedStartRefundService.START_FAILED.equals(session.getStatus());
+        if (retryWithHeldPayment) {
+            if (!FailedStartRefundService.hasHeldPayment(session)) {
+                throw new IllegalStateException("No held payment found to retry charging with.");
+            }
+            int claimed = chargingSessionRepository.transitionStatus(
+                    sessionId, FailedStartRefundService.START_FAILED, "PENDING_PAYMENT", LocalDateTime.now());
+            if (claimed == 0) {
+                throw new IllegalStateException("Session is no longer awaiting a retry. It may already have been refunded.");
+            }
+            session = chargingSessionRepository.findById(sessionId)
+                    .orElseThrow(() -> new RuntimeException("Session not found: " + sessionId));
+            session.setEndedAt(null);
+            logger.info("Session {} retrying charging with held payment {}", sessionId, session.getPreauthId());
+        }
+
         if (!"PENDING_PAYMENT".equals(session.getStatus())) {
             throw new IllegalStateException("Session is not awaiting payment. Current status: " + session.getStatus());
         }
@@ -594,52 +623,74 @@ public class ChargingSessionService {
             throw new IllegalStateException("Connector must be verified before payment");
         }
 
-        Integer connectorNo = session.getConnectorNo();
-        String startedBy = session.getStartedBy();
-
-        String chargerOcppId = chargingSessionRepository.findChargerOcppIdentityBySessionId(sessionId)
-                .orElseThrow(() -> new RuntimeException("Charger not found for session: " + sessionId));
-
-        if (!ocppWebSocketHandler.isChargerConnected(chargerOcppId)) {
-            throw new IllegalStateException("Charger is offline. Please connect simulator/charger first.");
-        }
-
-        // Re-check plug state right before payment and RemoteStart to prevent locked PENDING_START sessions.
-        String connectorStatus = getConnectorStatusForSession(sessionId);
-        if (!isConnectorPluggedStatus(connectorStatus)) {
-            connectorStatus = refreshConnectorStatusIfStale(sessionId, chargerOcppId, connectorNo, connectorStatus);
-        }
-        if (!isConnectorPluggedStatus(connectorStatus)) {
-            if (isAcSocketBypassEligible(sessionId, connectorStatus)) {
-                logger.warn("Session {}: bypassing pre-start plug-state check for AC/socket charger. status={}, {}",
-                        sessionId,
-                        connectorStatus,
-                        describeBypassContext(sessionId));
-            } else {
-            throw new IllegalStateException(
-                "Connector unplugged before start (current status: " + connectorStatus + "). " +
-                "Please plug in vehicle and verify connector again."
-            );
-            }
-        }
-
         Double preauthAmount = session.getPreauthAmount() == null ? 0.0 : session.getPreauthAmount();
-        boolean ownerDeferredPayment = "OWNER".equalsIgnoreCase(session.getStartedBy());
-        if (razorpayPaymentId != null && !razorpayPaymentId.isBlank()) {
-            // Customer already completed real payment via the Razorpay Checkout widget.
-            // Record the real gateway payment id so later capture/refund calls hit the
-            // actual transaction instead of an internal placeholder.
+        if (razorpayPaymentId != null && !razorpayPaymentId.isBlank() && !razorpayPaymentId.equals(session.getPreauthId())) {
+            // Customer already completed real payment via the Razorpay Checkout widget. Record it before any
+            // charger checks so a failure below can never lose track of money that was already collected.
             paymentService.recordRealPaymentId(session.getId(), razorpayPaymentId, BigDecimal.valueOf(preauthAmount));
             session.setPreauthId(razorpayPaymentId);
             session.setPaymentStatus("PREAUTH_SUCCESS");
+            session = chargingSessionRepository.saveAndFlush(session);
             logger.info("Session {} linked to real Razorpay payment {}", sessionId, razorpayPaymentId);
+        }
+
+        Integer connectorNo = session.getConnectorNo();
+        String startedBy = session.getStartedBy();
+        String chargerOcppId;
+
+        try {
+            chargerOcppId = chargingSessionRepository.findChargerOcppIdentityBySessionId(sessionId)
+                    .orElseThrow(() -> new IllegalStateException("Charger not found for session: " + sessionId));
+
+            if (!ocppWebSocketHandler.isChargerConnected(chargerOcppId)) {
+                throw new IllegalStateException("Charger is offline. Please connect simulator/charger first.");
+            }
+
+            if (retryWithHeldPayment) {
+                Long chargerId = chargingSessionRepository.findByIdWithChargerAndConnector(sessionId)
+                        .map(s -> s.getCharger().getId())
+                        .orElseThrow(() -> new IllegalStateException("Charger not found for session: " + sessionId));
+                boolean connectorTaken = chargingSessionRepository.existsByCharger_IdAndConnectorNoAndStatusIn(
+                        chargerId, connectorNo, java.util.List.of("PENDING_VERIFICATION", "PENDING_START", "ACTIVE", "STOPPING"));
+                if (connectorTaken) {
+                    throw new IllegalStateException("This connector is now in use by another session. Please choose a refund.");
+                }
+            }
+
+            // Re-check plug state right before payment and RemoteStart to prevent locked PENDING_START sessions.
+            String connectorStatus = getConnectorStatusForSession(sessionId);
+            if (!isConnectorPluggedStatus(connectorStatus)) {
+                connectorStatus = refreshConnectorStatusIfStale(sessionId, chargerOcppId, connectorNo, connectorStatus);
+            }
+            if (!isConnectorPluggedStatus(connectorStatus)) {
+                if (isAcSocketBypassEligible(sessionId, connectorStatus)) {
+                    logger.warn("Session {}: bypassing pre-start plug-state check for AC/socket charger. status={}, {}",
+                            sessionId,
+                            connectorStatus,
+                            describeBypassContext(sessionId));
+                } else {
+                throw new IllegalStateException(
+                    "Connector unplugged before start (current status: " + connectorStatus + "). " +
+                    "Please plug in vehicle and verify connector again."
+                );
+                }
+            }
+        } catch (RuntimeException ex) {
+            if (FailedStartRefundService.hasHeldPayment(session)) {
+                failedStartRefundService.markStartFailed(session, ex.getMessage());
+                throw new IllegalStateException(ex.getMessage(), ex);
+            }
+            throw ex;
+        }
+
+        boolean ownerDeferredPayment = "OWNER".equalsIgnoreCase(session.getStartedBy());
+        if (FailedStartRefundService.hasHeldPayment(session)) {
+            // Real Razorpay payment recorded above, or a retry reusing the existing hold.
+            logger.info("Session {} using held payment {}", sessionId, session.getPreauthId());
         } else if (ownerDeferredPayment) {
             // Owner mode: start charging now, collect payment after session completion.
             session.setPaymentStatus("PAYMENT_PENDING");
             logger.info("Session {} started by owner; skipping pre-authorization", sessionId);
-        } else if (session.getPreauthId() != null && "PREAUTH_SUCCESS".equalsIgnoreCase(session.getPaymentStatus())) {
-            // Retry path: keep using the existing hold instead of creating a new pre-auth.
-            logger.info("Session {} reusing existing pre-authorization {} for retry", sessionId, session.getPreauthId());
         } else {
             try {
                 PaymentService.PreAuthResult preAuthResult = paymentService.createPreAuth(
@@ -656,39 +707,40 @@ public class ChargingSessionService {
         }
 
         session.setStatus("PENDING_START");
-        chargingSessionRepository.saveAndFlush(session);
+        session = chargingSessionRepository.saveAndFlush(session);
         logger.debug("Session {} marked as PENDING_START after payment", sessionId);
 
         // Send OCPP command after payment success
+        String startFailure;
         try {
             logger.info("Sending RemoteStartTransaction for sessionId={}, charger={}, connectorNo={}",
                     sessionId, chargerOcppId, connectorNo);
             boolean remoteStartAccepted = ocppWebSocketHandler.sendRemoteStart(chargerOcppId, connectorNo, startedBy);
-            if (!remoteStartAccepted) {
-                logger.warn("RemoteStartTransaction was not accepted for sessionId={} charger={} connectorNo={}",
-                    sessionId, chargerOcppId, connectorNo);
-                session.setStatus("PENDING_PAYMENT");
-                session.setEndedAt(null);
-                chargingSessionRepository.save(session);
-                throw new IllegalStateException("Charger rejected start request. Payment hold is still valid; please try start again.");
+            if (remoteStartAccepted) {
+                // Update connector status to Preparing - using direct query to avoid proxy
+                Long connectorId = chargingSessionRepository.findConnectorIdBySessionId(sessionId)
+                        .orElseThrow(() -> new RuntimeException("Connector not found for session: " + sessionId));
+                connectorRepository.updateStatusById(connectorId, "Preparing");
+
+                logger.info("RemoteStartTransaction sent successfully for session {}", sessionId);
+                return;
             }
-            
-            // Update connector status to Preparing - using direct query to avoid proxy
-            Long connectorId = chargingSessionRepository.findConnectorIdBySessionId(sessionId)
-                    .orElseThrow(() -> new RuntimeException("Connector not found for session: " + sessionId));
-            connectorRepository.updateStatusById(connectorId, "Preparing");
-            
-            logger.info("RemoteStartTransaction sent successfully for session {}", sessionId);
-        } catch (IllegalStateException ex) {
-            logger.warn("RemoteStartTransaction validation failed for sessionId={}: {}", sessionId, ex.getMessage());
-            throw ex;
+            logger.warn("RemoteStartTransaction was not accepted for sessionId={} charger={} connectorNo={}",
+                sessionId, chargerOcppId, connectorNo);
+            startFailure = "Charger did not accept the start request.";
         } catch (Exception ex) {
             logger.error("Failed to send RemoteStartTransaction for sessionId={}", sessionId, ex);
+            startFailure = "Failed to initiate charging: " + ex.getMessage();
+        }
+
+        if (FailedStartRefundService.hasHeldPayment(session)) {
+            failedStartRefundService.markStartFailed(session, startFailure);
+        } else {
             session.setStatus("PENDING_PAYMENT");
             session.setEndedAt(null);
             chargingSessionRepository.save(session);
-            throw new RuntimeException("Failed to initiate charging: " + ex.getMessage(), ex);
         }
+        throw new IllegalStateException(startFailure);
     }
 
     private String getConnectorStatusForSession(long sessionId) {

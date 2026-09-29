@@ -5,6 +5,7 @@ import com.evcsms.backend.ocpp.OcppWebSocketHandler;
 import com.evcsms.backend.repository.*;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.evcsms.backend.service.AdminAuthService;
+import com.evcsms.backend.service.AdminAuditLogRetentionService;
 import com.evcsms.backend.service.OwnerAuthService;
 import com.evcsms.backend.service.SettlementService;
 import jakarta.servlet.http.HttpServletRequest;
@@ -43,6 +44,7 @@ public class AdminPortalController {
     private final RfidRegistryRepository rfidRegistryRepository;
     private final OcppConfigurationRepository ocppConfigurationRepository;
     private final AdminAuditLogRepository adminAuditLogRepository;
+    private final AdminAuditLogRetentionService adminAuditLogRetentionService;
     private final CompletedChargingLogRepository completedChargingLogRepository;
     private final SettlementRepository settlementRepository;
     private final StationSettlementRepository stationSettlementRepository;
@@ -64,6 +66,7 @@ public class AdminPortalController {
             RfidRegistryRepository rfidRegistryRepository,
             OcppConfigurationRepository ocppConfigurationRepository,
                 AdminAuditLogRepository adminAuditLogRepository,
+                AdminAuditLogRetentionService adminAuditLogRetentionService,
                 CompletedChargingLogRepository completedChargingLogRepository,
                 SettlementRepository settlementRepository,
                 StationSettlementRepository stationSettlementRepository,
@@ -83,6 +86,7 @@ public class AdminPortalController {
         this.rfidRegistryRepository = rfidRegistryRepository;
         this.ocppConfigurationRepository = ocppConfigurationRepository;
         this.adminAuditLogRepository = adminAuditLogRepository;
+        this.adminAuditLogRetentionService = adminAuditLogRetentionService;
         this.completedChargingLogRepository = completedChargingLogRepository;
         this.settlementRepository = settlementRepository;
         this.stationSettlementRepository = stationSettlementRepository;
@@ -1352,7 +1356,7 @@ public class AdminPortalController {
     @GetMapping("/logs/system")
     public List<AdminAuditLog> systemLogs(@RequestHeader("Authorization") String authorization) {
         requireAdmin(authorization, "SUPER_ADMIN", "ADMIN");
-        return adminAuditLogRepository.findAll();
+        return adminAuditLogRetentionService.getRetainedLogs();
     }
 
     @GetMapping("/logs/ocpp")

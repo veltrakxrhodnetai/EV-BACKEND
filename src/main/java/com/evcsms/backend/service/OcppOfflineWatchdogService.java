@@ -34,6 +34,7 @@ public class OcppOfflineWatchdogService {
     private final MeterValueRepository meterValueRepository;
     private final ChargingSessionService chargingSessionService;
     private final OcppWebSocketHandler ocppWebSocketHandler;
+    private final ChargerUptimeService chargerUptimeService;
 
     @Value("${app.charging.offline-session-timeout-seconds:120}")
     private int offlineSessionTimeoutSeconds;
@@ -44,7 +45,8 @@ public class OcppOfflineWatchdogService {
             ConnectorRepository connectorRepository,
             MeterValueRepository meterValueRepository,
             ChargingSessionService chargingSessionService,
-            OcppWebSocketHandler ocppWebSocketHandler
+            OcppWebSocketHandler ocppWebSocketHandler,
+            ChargerUptimeService chargerUptimeService
     ) {
         this.chargerRepository = chargerRepository;
         this.chargingSessionRepository = chargingSessionRepository;
@@ -52,6 +54,7 @@ public class OcppOfflineWatchdogService {
         this.meterValueRepository = meterValueRepository;
         this.chargingSessionService = chargingSessionService;
         this.ocppWebSocketHandler = ocppWebSocketHandler;
+        this.chargerUptimeService = chargerUptimeService;
     }
 
     @Scheduled(fixedDelayString = "${app.ocpp.presence.watchdog-interval-millis:15000}")
@@ -72,6 +75,7 @@ public class OcppOfflineWatchdogService {
             if (!expectedStatus.equalsIgnoreCase(currentStatus)) {
                 charger.setCommunicationStatus(expectedStatus);
                 changed.add(charger);
+                chargerUptimeService.recordStatusChange(charger.getOcppIdentity(), expectedStatus);
             }
         }
 
