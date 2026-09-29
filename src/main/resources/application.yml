@@ -70,7 +70,7 @@ app:
     offline-session-timeout-seconds: ${APP_CHARGING_OFFLINE_SESSION_TIMEOUT_SECONDS:120}
     # Paid session whose charging never started: seconds before a PENDING_START without StartTransaction is treated as failed,
     # and seconds the customer gets to choose "retry" or "refund" before the payment is refunded automatically.
-    pending-start-timeout-seconds: ${APP_CHARGING_PENDING_START_TIMEOUT_SECONDS:180}
+    pending-start-timeout-seconds: ${APP_CHARGING_PENDING_START_TIMEOUT_SECONDS:120}
     failed-start-auto-refund-seconds: ${APP_CHARGING_FAILED_START_AUTO_REFUND_SECONDS:300}
   ocpp:
     presence:

@@ -42,7 +42,7 @@ public class FailedStartRefundService {
             PaymentService paymentService,
             Msg91OtpService msg91OtpService,
             PlatformTransactionManager transactionManager,
-            @Value("${app.charging.pending-start-timeout-seconds:180}") long pendingStartTimeoutSeconds,
+            @Value("${app.charging.pending-start-timeout-seconds:120}") long pendingStartTimeoutSeconds,
             @Value("${app.charging.failed-start-auto-refund-seconds:300}") long autoRefundSeconds
     ) {
         this.chargingSessionRepository = chargingSessionRepository;

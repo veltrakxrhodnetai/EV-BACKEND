@@ -604,6 +604,19 @@ public class ChargingSessionService {
             if (!FailedStartRefundService.hasHeldPayment(session)) {
                 throw new IllegalStateException("No held payment found to retry charging with.");
             }
+            long retryMeterStart = session.getMeterStart() == null ? 0L : session.getMeterStart();
+            boolean energyWasDelivered = meterValueRepository.findLatestBySessionId(sessionId)
+                    .map(MeterValue::getEnergyWh)
+                    .map(latestWh -> latestWh != null && latestWh > retryMeterStart)
+                    .orElse(false);
+            if (energyWasDelivered
+                    || (session.getEnergyConsumedKwh() != null && session.getEnergyConsumedKwh() > 0.0)
+                    || (session.getTotalAmount() != null && session.getTotalAmount() > 0.0)) {
+                throw new IllegalStateException(
+                        "This session already delivered energy and cannot be restarted with the same payment. "
+                                + "It must be settled normally."
+                );
+            }
             int claimed = chargingSessionRepository.transitionStatus(
                     sessionId, FailedStartRefundService.START_FAILED, "PENDING_PAYMENT", LocalDateTime.now());
             if (claimed == 0) {
@@ -689,8 +702,24 @@ public class ChargingSessionService {
             }
         } catch (RuntimeException ex) {
             if (FailedStartRefundService.hasHeldPayment(session)) {
-                failedStartRefundService.markStartFailed(session, ex.getMessage());
-                throw new IllegalStateException(ex.getMessage(), ex);
+                if (retryWithHeldPayment) {
+                    // The retry was claimed above. Put it back into the decision state when validation fails
+                    // (offline/unplugged/connector occupied) so the customer can try again or request a refund.
+                    failedStartRefundService.markStartFailed(session, ex.getMessage());
+                    throw new IllegalStateException(ex.getMessage(), ex);
+                }
+                // Do not offer refund/retry immediately after Razorpay succeeds. Charger state and OCPP
+                // replies can arrive late, especially on AC units. Keep the paid session recoverable for
+                // the complete start grace period; a late StartTransaction can still activate it.
+                session.setStatus("PENDING_START");
+                session.setEndedAt(null);
+                chargingSessionRepository.saveAndFlush(session);
+                throw new IllegalStateException(
+                        ex.getMessage() + " Waiting up to "
+                                + failedStartRefundService.getPendingStartTimeoutSeconds()
+                                + " seconds for the charger before refund/retry is offered.",
+                        ex
+                );
             }
             throw ex;
         }
@@ -746,7 +775,16 @@ public class ChargingSessionService {
         }
 
         if (FailedStartRefundService.hasHeldPayment(session)) {
-            failedStartRefundService.markStartFailed(session, startFailure);
+            // A rejected/timed-out RemoteStart response is not final: some chargers send StartTransaction
+            // after the command response times out. Leave the session in PENDING_START until the scheduler's
+            // grace period expires so the customer is not shown refund/retry at the moment they press Start.
+            session.setStatus("PENDING_START");
+            session.setEndedAt(null);
+            chargingSessionRepository.saveAndFlush(session);
+            // The OCPP response may have timed out while the physical charger is still processing the command.
+            // Treat the paid request as queued and let StartTransaction or the 120-second reconciler decide it.
+            logger.info("Session {} remains PENDING_START after OCPP start response failure: {}", sessionId, startFailure);
+            return;
         } else {
             session.setStatus("PENDING_PAYMENT");
             session.setEndedAt(null);
